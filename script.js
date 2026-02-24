@@ -15,20 +15,6 @@ const stopBtn = document.getElementById("stopBtn");
 
 const countdownEl = document.getElementById("countdown");
 
-/* mensaje stop */
-const stopMessage = document.createElement("div");
-stopMessage.innerText = "SCAN FINALIZADO";
-stopMessage.style.position="absolute";
-stopMessage.style.top="50%";
-stopMessage.style.left="50%";
-stopMessage.style.transform="translate(-50%,-50%)";
-stopMessage.style.fontSize="38px";
-stopMessage.style.fontWeight="bold";
-stopMessage.style.opacity="0";
-stopMessage.style.pointerEvents="none";
-stopMessage.style.textShadow="0 0 20px red";
-document.body.appendChild(stopMessage);
-
 let scanning=false;
 let previousFrame=null;
 let shots=[];
@@ -63,16 +49,7 @@ video.srcObject=stream;
 alert("Activa permisos de cámara");
 });
 
-/* RESIZE */
-
-function resizeCanvas(){
-overlay.width = video.clientWidth;
-overlay.height = video.clientHeight;
-}
-video.addEventListener("loadedmetadata", resizeCanvas);
-window.addEventListener("resize", resizeCanvas);
-
-/* COUNTDOWN */
+/* COUNTDOWN SYSTEM */
 
 async function startCountdown(){
 
@@ -82,8 +59,12 @@ for(let i=3;i>0;i--){
 
 countdownEl.innerText=i;
 countdownEl.style.opacity=1;
+countdownEl.style.transform="translate(-50%,-50%) scale(1.2)";
 
-await new Promise(r=>setTimeout(r,1000));
+await new Promise(r=>setTimeout(r,700));
+
+countdownEl.style.transform="translate(-50%,-50%) scale(.8)";
+await new Promise(r=>setTimeout(r,300));
 
 if(!countdownActive) return;
 }
@@ -93,20 +74,6 @@ countdownEl.style.opacity=0;
 scanning=true;
 previousFrame=null;
 countdownActive=false;
-
-}
-
-/* STOP ANIMATION */
-
-function showStopMessage(){
-
-stopMessage.style.transition="none";
-stopMessage.style.opacity="1";
-
-setTimeout(()=>{
-stopMessage.style.transition="1s";
-stopMessage.style.opacity="0";
-},1200);
 
 }
 
@@ -121,25 +88,9 @@ stopBtn.onclick=()=>{
 scanning=false;
 countdownActive=false;
 countdownEl.style.opacity=0;
-showStopMessage();
 };
 
-/* TAP TEST MODE */
-
-overlay.addEventListener("click",(e)=>{
-
-if(!scanning) return;
-
-const rect = overlay.getBoundingClientRect();
-
-registerShot(
-e.clientX - rect.left,
-e.clientY - rect.top
-);
-
-});
-
-/* DETECTION LOOP */
+/* DETECTION */
 
 setInterval(()=>{
 
@@ -169,11 +120,7 @@ let now=Date.now();
 
 if(diffCount>PIXEL_CHANGE_REQUIRED && now-lastShotTime>MIN_TIME_BETWEEN_SHOTS){
 
-registerShot(
-Math.random()*overlay.width,
-Math.random()*overlay.height
-);
-
+registerShot();
 lastShotTime=now;
 
 }
@@ -184,15 +131,18 @@ previousFrame=frame;
 
 },FRAME_INTERVAL);
 
-/* SHOT SYSTEM */
+/* SHOTS */
 
-function registerShot(x,y){
+function registerShot(){
+
+overlay.width=video.clientWidth;
+overlay.height=video.clientHeight;
 
 shots.forEach(s=>s.color="blue");
 
 shots.push({
-x,
-y,
+x:Math.random()*overlay.width,
+y:Math.random()*overlay.height,
 color:"red"
 });
 
