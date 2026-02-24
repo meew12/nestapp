@@ -13,10 +13,13 @@ const processCtx = processCanvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 
+const countdownEl = document.getElementById("countdown");
+
 let scanning=false;
 let previousFrame=null;
 let shots=[];
 let lastShotTime=0;
+let countdownActive=false;
 
 const FRAME_INTERVAL=300;
 const CHANGE_THRESHOLD=35;
@@ -27,12 +30,10 @@ const MIN_TIME_BETWEEN_SHOTS=800;
 
 setTimeout(()=>{
 splash.style.opacity="0";
-
 setTimeout(()=>{
 splash.style.display="none";
 app.classList.remove("hidden");
 },700);
-
 },2000);
 
 /* CAMERA */
@@ -48,15 +49,45 @@ video.srcObject=stream;
 alert("Activa permisos de cámara");
 });
 
+/* COUNTDOWN SYSTEM */
+
+async function startCountdown(){
+
+countdownActive=true;
+
+for(let i=3;i>0;i--){
+
+countdownEl.innerText=i;
+countdownEl.style.opacity=1;
+countdownEl.style.transform="translate(-50%,-50%) scale(1.2)";
+
+await new Promise(r=>setTimeout(r,700));
+
+countdownEl.style.transform="translate(-50%,-50%) scale(.8)";
+await new Promise(r=>setTimeout(r,300));
+
+if(!countdownActive) return;
+}
+
+countdownEl.style.opacity=0;
+
+scanning=true;
+previousFrame=null;
+countdownActive=false;
+
+}
+
 /* BUTTONS */
 
 startBtn.onclick=()=>{
-scanning=true;
-previousFrame=null;
+if(scanning || countdownActive) return;
+startCountdown();
 };
 
 stopBtn.onclick=()=>{
 scanning=false;
+countdownActive=false;
+countdownEl.style.opacity=0;
 };
 
 /* DETECTION */
