@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NESTOR SHOOT</title>
+
+<link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<!-- SPLASH -->
+<div id="splash">
+    <h1>NESTOR SHOOT</h1>
+</div>
+
+<!-- APP -->
+<div id="app" class="hidden">
+
+    <!-- HEADER BANNER -->
+    <div class="banner">
+        <img src="https://picsum.photos/900/400?random=10">
+        <div class="banner-overlay">
+
+            <div class="header-bar">
+                <div class="title-group">
+                    <h1>NESTOR SHOOT</h1>
+                    <span>Escaneo automático de disparos</span>
+                </div>
+
+                <div class="avatar"></div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- CAMERA -->
+    <main>
+
+        <video id="video" autoplay playsinline></video>
+
+        <canvas id="overlay"></canvas>
+        <canvas id="processCanvas"></canvas>
+
+        <div class="camera-gradient"></div>
+
+        <div class="camera-label">
+            Apunte al blanco para detectar impactos
+        </div>
+
+    </main>
+
+    <!-- GLASS CONTROLS -->
+    <div class="controls">
+
+        <button id="startBtn" class="btn start">
+            COMENZAR SCAN
+        </button>
+
+        <button id="stopBtn" class="btn stop">
+            DETENER
+        </button>
+
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
