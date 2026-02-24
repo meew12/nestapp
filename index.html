@@ -17,45 +17,43 @@
 
 <div id="app" class="hidden">
 
-<!-- HEADER SIMPLE -->
 <header>
     <div class="title">NESTOR SHOOT</div>
-    <div class="avatar"></div>
+
+    <!-- avatar estilo sin foto -->
+    <div class="avatar">
+        <div class="avatar-icon"></div>
+    </div>
 </header>
 
-<!-- INFO SECTION -->
 <section class="intro">
 
-    <div class="logo-circle">
-        🎯
-    </div>
+    <div class="logo-circle">🎯</div>
 
     <h2>NESTOR SHOOT</h2>
     <p>Detección automática de impactos en tiempo real</p>
 
     <div class="cards">
-
         <div class="card">📷 Cámara en tiempo real</div>
         <div class="card">📈 Detección automática</div>
         <div class="card">📍 Marcadores de precisión</div>
-
     </div>
 
 </section>
 
-<!-- CAMERA -->
 <main>
-
 <video id="video" autoplay playsinline></video>
 <canvas id="overlay"></canvas>
 <canvas id="processCanvas"></canvas>
 
+<!-- countdown -->
+<div id="countdown">3</div>
+
 </main>
 
-<!-- BUTTONS -->
 <div class="controls">
-    <button id="startBtn" class="btn start">COMENZAR SCAN</button>
-    <button id="stopBtn" class="btn stop">DETENER</button>
+<button id="startBtn" class="btn start">COMENZAR SCAN</button>
+<button id="stopBtn" class="btn stop">DETENER</button>
 </div>
 
 </div>
