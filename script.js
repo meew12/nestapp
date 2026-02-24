@@ -1,4 +1,4 @@
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", ()=>{
 
 const splash = document.getElementById("splash");
 const app = document.getElementById("app");
@@ -13,167 +13,131 @@ const processCtx = processCanvas.getContext("2d");
 const startBtn = document.getElementById("startBtn");
 const stopBtn = document.getElementById("stopBtn");
 
-let stream;
-let scanning = false;
-let previousFrame = null;
-let shots = [];
-let lastShotTime = 0;
+let scanning=false;
+let previousFrame=null;
+let shots=[];
+let lastShotTime=0;
 
-/* detection settings */
-const FRAME_INTERVAL = 300;
-const CHANGE_THRESHOLD = 35;
-const PIXEL_CHANGE_REQUIRED = 5000;
-const MIN_TIME_BETWEEN_SHOTS = 800;
+const FRAME_INTERVAL=300;
+const CHANGE_THRESHOLD=35;
+const PIXEL_CHANGE_REQUIRED=5000;
+const MIN_TIME_BETWEEN_SHOTS=800;
 
 /* SPLASH */
-setTimeout(()=>{
-    splash.style.opacity = "0";
 
-    setTimeout(()=>{
-        splash.style.display="none";
-        app.classList.remove("hidden");
-    },800);
+setTimeout(()=>{
+splash.style.opacity="0";
+
+setTimeout(()=>{
+splash.style.display="none";
+app.classList.remove("hidden");
+},700);
 
 },2000);
 
 /* CAMERA */
 
-async function startCamera(){
-
-    try{
-
-        stream = await navigator.mediaDevices.getUserMedia({
-            video:{
-                facingMode:{ ideal:"environment" }
-            },
-            audio:false
-        });
-
-        video.srcObject = stream;
-
-    }catch(e){
-
-        console.log("Camera error:", e);
-
-        alert("No se pudo acceder a la cámara.\nUsa HTTPS o localhost.");
-
-    }
-
-}
-
-/* RESIZE */
-
-function resizeCanvas(){
-
-    overlay.width = video.clientWidth;
-    overlay.height = video.clientHeight;
-
-    processCanvas.width = 320;
-    processCanvas.height = 240;
-}
-
-video.addEventListener("loadedmetadata", resizeCanvas);
-window.addEventListener("resize", resizeCanvas);
+navigator.mediaDevices.getUserMedia({
+video:{facingMode:{ideal:"environment"}},
+audio:false
+})
+.then(stream=>{
+video.srcObject=stream;
+})
+.catch(()=>{
+alert("Activa permisos de cámara");
+});
 
 /* BUTTONS */
 
-startBtn.onclick = ()=>{
-    scanning = true;
-    previousFrame = null;
+startBtn.onclick=()=>{
+scanning=true;
+previousFrame=null;
 };
 
-stopBtn.onclick = ()=>{
-    scanning = false;
+stopBtn.onclick=()=>{
+scanning=false;
 };
 
-/* DETECTION LOOP */
+/* DETECTION */
 
 setInterval(()=>{
 
-    if(!scanning) return;
-    if(video.readyState !== 4) return;
+if(!scanning) return;
+if(video.readyState!==4) return;
 
-    processCtx.drawImage(video,0,0,320,240);
+processCanvas.width=320;
+processCanvas.height=240;
 
-    const frame = processCtx.getImageData(0,0,320,240);
+processCtx.drawImage(video,0,0,320,240);
 
-    if(previousFrame){
+const frame=processCtx.getImageData(0,0,320,240);
 
-        let diffCount = 0;
+if(previousFrame){
 
-        for(let i=0;i<frame.data.length;i+=4){
+let diffCount=0;
 
-            const r = Math.abs(frame.data[i] - previousFrame.data[i]);
-            const g = Math.abs(frame.data[i+1] - previousFrame.data[i+1]);
-            const b = Math.abs(frame.data[i+2] - previousFrame.data[i+2]);
+for(let i=0;i<frame.data.length;i+=4){
 
-            const diff = (r+g+b)/3;
+let diff=Math.abs(frame.data[i]-previousFrame.data[i]);
 
-            if(diff > CHANGE_THRESHOLD){
-                diffCount++;
-            }
+if(diff>CHANGE_THRESHOLD) diffCount++;
 
-        }
+}
 
-        const now = Date.now();
+let now=Date.now();
 
-        if(
-            diffCount > PIXEL_CHANGE_REQUIRED &&
-            now - lastShotTime > MIN_TIME_BETWEEN_SHOTS
-        ){
-            registerShot();
-            lastShotTime = now;
-        }
+if(diffCount>PIXEL_CHANGE_REQUIRED && now-lastShotTime>MIN_TIME_BETWEEN_SHOTS){
 
-    }
+registerShot();
+lastShotTime=now;
 
-    previousFrame = frame;
+}
 
-}, FRAME_INTERVAL);
+}
 
-/* REGISTER SHOT */
+previousFrame=frame;
+
+},FRAME_INTERVAL);
+
+/* SHOTS */
 
 function registerShot(){
 
-    const x = Math.random() * overlay.width;
-    const y = Math.random() * overlay.height;
+overlay.width=video.clientWidth;
+overlay.height=video.clientHeight;
 
-    shots.forEach(s=>s.color="blue");
+shots.forEach(s=>s.color="blue");
 
-    shots.push({
-        x,
-        y,
-        color:"red"
-    });
+shots.push({
+x:Math.random()*overlay.width,
+y:Math.random()*overlay.height,
+color:"red"
+});
 
-    drawShots();
+drawShots();
+
 }
-
-/* DRAW */
 
 function drawShots(){
 
-    overlayCtx.clearRect(0,0,overlay.width,overlay.height);
+overlayCtx.clearRect(0,0,overlay.width,overlay.height);
 
-    shots.forEach(s=>{
+shots.forEach(s=>{
 
-        overlayCtx.beginPath();
-        overlayCtx.arc(s.x, s.y, 10, 0, Math.PI*2);
+overlayCtx.beginPath();
+overlayCtx.arc(s.x,s.y,10,0,Math.PI*2);
 
-        overlayCtx.shadowBlur = 18;
-        overlayCtx.shadowColor = s.color;
+overlayCtx.shadowBlur=18;
+overlayCtx.shadowColor=s.color;
 
-        overlayCtx.fillStyle = s.color;
-        overlayCtx.fill();
+overlayCtx.fillStyle=s.color;
+overlayCtx.fill();
 
-        overlayCtx.shadowBlur = 0;
+overlayCtx.shadowBlur=0;
 
-    });
+});
 
 }
-
-/* INIT */
-
-startCamera();
 
 });
