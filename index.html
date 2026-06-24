@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#0a0e1a" />
+  <title>E-TARGET</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- OpenCV.js 4.8 from CDN -->
+  <script async src="https://docs.opencv.org/4.8.0/opencv.js" id="opencvScript" onload="window._opencvReady=true"></script>
+</head>
+<body>
+
+  <!-- ════════════════════════════════════════
+       SCREEN 1 — SPLASH SCREEN
+  ════════════════════════════════════════ -->
+  <div id="splashScreen" class="screen active">
+    <div class="splash-bg">
+      <div class="splash-grid"></div>
+      <div class="splash-vignette"></div>
+    </div>
+    <div class="splash-content">
+      <div class="splash-logo-ring">
+  <img src="logo1.png" alt="Logo" class="logo">
+</div>
+      <h1 class="splash-title"> 
+<span class="title-nestor">E-TARGET</span> 
+</h1>
+      <p class="splash-tagline">DETECCIÓN DE IMPACTOS EN TIEMPO REAL</p>
+      <div class="splash-loader">
+        <div class="loader-bar"><div class="loader-fill" id="loaderFill"></div></div>
+        <span class="loader-text" id="loaderText">Iniciando sistema…</span>
+      </div>
+    </div>
+    <div class="splash-corner tl"></div>
+    <div class="splash-corner tr"></div>
+    <div class="splash-corner bl"></div>
+    <div class="splash-corner br"></div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       SCREEN 2 — MAIN MENU
+  ════════════════════════════════════════ -->
+  <div id="mainMenu" class="screen">
+
+    <header class="menu-header">
+      <div class="header-title-wrap">
+        <div class="header-crosshair-small">
+          <span></span><span></span><span></span>
+        </div>
+        <span class="header-title">E-TARGET</span>
+      </div>
+      <div class="header-actions">
+        <button class="icon-btn" id="settingsBtn" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <div class="profile-avatar" id="profileAvatar">
+          <img src="assets/profile.jpg" alt="Perfil"
+               onerror="this.style.display='none';this.parentElement.querySelector('.avatar-fallback').style.display='flex'" />
+          <div class="avatar-fallback">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+            </svg>
+          </div>
+          <div class="avatar-ring"></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Animated target visual -->
+    <div class="menu-hero">
+      <div class="target-visual">
+        <div class="target-ring r1"></div>
+        <div class="target-ring r2"></div>
+        <div class="target-ring r3"></div>
+        <div class="target-ring r4"></div>
+        <div class="target-ring r5"></div>
+        <div class="target-center-dot"></div>
+        <div class="target-scan-line"></div>
+      </div>
+    </div>
+
+    <!-- Session stats -->
+    <div class="stats-bar">
+      <div class="stat-item">
+        <span class="stat-value" id="menuTotalShots">0</span>
+        <span class="stat-label">DISPAROS</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <span class="stat-value" id="menuBestScore">—</span>
+        <span class="stat-label">MEJOR PUNTAJE</span>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <span class="stat-value" id="menuSessions">0</span>
+        <span class="stat-label">SESIONES</span>
+      </div>
+    </div>
+
+    <!-- Training mode toggle -->
+    <div class="mode-section">
+      <div class="mode-toggle-wrap">
+        <label class="mode-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="16">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          MODO ENTRENAMIENTO
+        </label>
+        <label class="toggle-switch">
+          <input type="checkbox" id="trainingToggle" />
+          <span class="toggle-thumb"></span>
+        </label>
+      </div>
+      <p class="mode-desc" id="modeDesc">Modo competencia — Los impactos se puntúan automáticamente</p>
+    </div>
+
+    <!-- Start button -->
+    <div class="start-section">
+      <button class="start-btn" id="startBtn">
+        <span class="start-btn-inner">
+          <svg class="start-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+          INICIAR
+        </span>
+        <div class="btn-ripple" id="btnRipple"></div>
+      </button>
+    </div>
+
+  </div><!-- /mainMenu -->
+
+  <!-- ════════════════════════════════════════
+       SETTINGS PANEL (slide-up overlay)
+  ════════════════════════════════════════ -->
+  <div id="settingsPanel" class="panel-overlay hidden">
+    <div class="panel-backdrop" id="settingsBackdrop"></div>
+    <div class="panel-sheet">
+      <div class="panel-handle"></div>
+      <div class="panel-header">
+        <h2 class="panel-title">CALIBRACIÓN Y AJUSTES</h2>
+        <button class="icon-btn" id="closeSettings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-body">
+
+        <div class="setting-group">
+          <label class="setting-label">TAMAÑO DEL BLANCO</label>
+          <div class="setting-options">
+            <button class="opt-btn active" data-target="standard">Estándar<br><small>25 cm</small></button>
+            <button class="opt-btn" data-target="large">Grande<br><small>50 cm</small></button>
+            <button class="opt-btn" data-target="small">Pequeño<br><small>10 cm</small></button>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">SENSIBILIDAD DE DETECCIÓN</label>
+          <div class="slider-wrap">
+            <input type="range" id="sensitivitySlider" min="1" max="10" value="5" class="custom-slider" />
+            <div class="slider-labels">
+              <span>Baja</span>
+              <span id="sensitivityVal">5</span>
+              <span>Alta</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <label class="setting-label">UMBRAL DE ÁREA (px²)</label>
+          <div class="slider-wrap">
+            <input type="range" id="areaSlider" min="10" max="500" value="80" class="custom-slider" />
+            <div class="slider-labels">
+              <span>10</span>
+              <span id="areaVal">80</span>
+              <span>500</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group toggles-row">
+          <div class="toggle-row">
+            <span class="toggle-label">Sonido de impacto</span>
+            <label class="toggle-switch sm">
+              <input type="checkbox" id="soundToggle" checked />
+              <span class="toggle-thumb"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Vibración</span>
+            <label class="toggle-switch sm">
+              <input type="checkbox" id="vibrationToggle" checked />
+              <span class="toggle-thumb"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <span class="toggle-label">Flash en impacto</span>
+            <label class="toggle-switch sm">
+              <input type="checkbox" id="flashToggle" checked />
+              <span class="toggle-thumb"></span>
+            </label>
+          </div>
+        </div>
+
+        <button class="action-btn secondary full-width" id="calibrateBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18">
+            <circle cx="12" cy="12" r="10"/>
+            <line x1="12" y1="8" x2="12" y2="12"/>
+            <line x1="12" y1="16" x2="12.01" y2="16"/>
+          </svg>
+          CALIBRAR CÁMARA
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       SCREEN 3 — COUNTDOWN
+  ════════════════════════════════════════ -->
+  <div id="countdownScreen" class="screen">
+    <div class="countdown-bg"></div>
+    <div class="countdown-display">
+      <div class="countdown-ring-wrap">
+        <svg class="countdown-svg" viewBox="0 0 200 200">
+          <circle class="cd-track" cx="100" cy="100" r="85"/>
+          <circle class="cd-progress" cx="100" cy="100" r="85" id="cdProgressCircle"/>
+        </svg>
+      </div>
+      <div class="countdown-number" id="countdownNumber">3</div>
+    </div>
+    <p class="countdown-label">PREPARANDO DETECCIÓN…</p>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       SCREEN 4 — TARGET SCAN (camera)
+  ════════════════════════════════════════ -->
+  <div id="scanScreen" class="screen">
+
+    <!-- Camera feed + overlay canvas -->
+    <div class="camera-wrap" id="cameraWrap">
+      <video id="cameraFeed" autoplay playsinline muted></video>
+      <canvas id="detectionCanvas"></canvas>
+
+      <!-- HUD corners -->
+      <div class="hud-corners">
+        <div class="hud-corner tl"></div>
+        <div class="hud-corner tr"></div>
+        <div class="hud-corner bl"></div>
+        <div class="hud-corner br"></div>
+      </div>
+
+      <!-- Top HUD bar -->
+      <div class="hud-top">
+        <div class="hud-badge" id="trainingBadge" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="12">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          </svg>
+          ENTRENAMIENTO
+        </div>
+        <div class="hud-status">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">DETECTANDO</span>
+        </div>
+      </div>
+
+      <!-- Scan animation line -->
+      <div class="scan-line-anim" id="scanLineAnim"></div>
+
+      <!-- Shot flash overlay -->
+      <div class="flash-overlay" id="flashOverlay"></div>
+    </div>
+
+    <!-- Live scoreboard -->
+    <div class="scoreboard">
+      <div class="score-main">
+        <div class="score-block">
+          <span class="score-num" id="totalScoreDisplay">0</span>
+          <span class="score-lbl">PUNTAJE TOTAL</span>
+        </div>
+        <div class="score-divider-v"></div>
+        <div class="score-block">
+          <span class="score-num accent" id="lastShotDisplay">—</span>
+          <span class="score-lbl">ÚLTIMO IMPACTO</span>
+        </div>
+        <div class="score-divider-v"></div>
+        <div class="score-block">
+          <span class="score-num" id="shotCountDisplay">0</span>
+          <span class="score-lbl">DISPAROS</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom controls -->
+    <div class="scan-controls">
+      <button class="action-btn danger" id="stopBtn">
+        <svg viewBox="0 0 24 24" fill="currentColor" width="18">
+          <rect x="6" y="6" width="12" height="12" rx="2"/>
+        </svg>
+        DETENER
+      </button>
+      <button class="action-btn secondary" id="saveSessionBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
+        GUARDAR
+      </button>
+    </div>
+
+  </div><!-- /scanScreen -->
+
+  <!-- ════════════════════════════════════════
+       SCREEN 5 — FINAL RESULTS
+  ════════════════════════════════════════ -->
+  <div id="resultsScreen" class="screen">
+    <div class="results-bg"></div>
+
+    <div class="results-header">
+      <div class="results-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <h2 class="results-title">SESIÓN FINALIZADA</h2>
+    </div>
+
+    <div class="results-body">
+      <div class="results-score-hero">
+        <div class="results-score-ring">
+          <span class="results-score-num" id="finalScoreNum">0</span>
+          <span class="results-score-pts">PTS</span>
+        </div>
+        <span class="results-score-label">PUNTAJE FINAL</span>
+      </div>
+
+      <div class="results-grid">
+        <div class="result-stat">
+          <span class="rs-value" id="finalShots">0</span>
+          <span class="rs-label">DISPAROS</span>
+        </div>
+        <div class="result-stat">
+          <span class="rs-value" id="finalBest">—</span>
+          <span class="rs-label">MEJOR</span>
+        </div>
+        <div class="result-stat">
+          <span class="rs-value" id="finalAvg">—</span>
+          <span class="rs-label">PROMEDIO</span>
+        </div>
+        <div class="result-stat">
+          <span class="rs-value" id="finalDuration">0s</span>
+          <span class="rs-label">DURACIÓN</span>
+        </div>
+      </div>
+
+      <!-- Shot-by-shot log -->
+      <div class="shot-log-wrap">
+        <h3 class="shot-log-title">REGISTRO DE IMPACTOS</h3>
+        <div class="shot-log" id="shotLog"></div>
+      </div>
+    </div>
+
+    <div class="results-actions">
+      <button class="action-btn primary" id="newSessionBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18">
+          <path d="M23 4v6h-6"/>
+          <path d="M1 20v-6h6"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        NUEVA SESIÓN
+      </button>
+      <button class="action-btn secondary" id="saveResultsBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="18">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
+        GUARDAR SESIÓN
+      </button>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       CAMERA CALIBRATION OVERLAY
+  ════════════════════════════════════════ -->
+  <div id="calibrateOverlay" class="panel-overlay hidden">
+    <div class="panel-backdrop" id="calibrateBackdrop"></div>
+    <div class="calibrate-sheet">
+      <div class="panel-handle"></div>
+      <h2 class="panel-title" style="padding:20px 20px 8px">CALIBRACIÓN DE CÁMARA</h2>
+      <p class="calibrate-desc">
+        Apunta la cámara al centro del blanco y presiona
+        <strong>CALIBRAR</strong>. El sistema ajustará los parámetros de
+        detección automáticamente según la iluminación actual.
+      </p>
+      <div class="calibrate-preview-wrap">
+        <video id="calibrateVideo" autoplay playsinline muted></video>
+        <div class="calibrate-reticle">
+          <div class="reticle-h"></div>
+          <div class="reticle-v"></div>
+          <div class="reticle-circle"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;padding:16px 16px 24px">
+        <button class="action-btn primary flex-1" id="doCalibrateBtn">CALIBRAR</button>
+        <button class="action-btn secondary flex-1" id="closeCalibrateBtn">CANCELAR</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       GLOBAL TOAST NOTIFICATION
+  ════════════════════════════════════════ -->
+  <div id="toast" class="toast hidden">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" class="toast-icon" id="toastIcon">
+      <polyline points="20 6 9 17 4 12"/>
+    </svg>
+    <span id="toastMsg">Mensaje</span>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
