@@ -1,0 +1,52 @@
+{
+  "name": "E-TARGET — Detección de Impactos",
+  "short_name": "E-TARGET",
+  "description": "Aplicación profesional de detección de disparos y puntuación en tiempo real con cámara o telescopio digital. Estilo Accushoot.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#060910",
+  "theme_color": "#0a0e1a",
+  "categories": ["sports", "utilities", "productivity"],
+  "lang": "es",
+  "dir": "ltr",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Escanear",
+      "short_name": "Scan",
+      "description": "Iniciar detección de impactos",
+      "url": "/?action=scan",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    },
+    {
+      "name": "Historial",
+      "short_name": "Hist",
+      "description": "Ver sesiones anteriores",
+      "url": "/?action=history",
+      "icons": [{ "src": "/icon.svg", "sizes": "any" }]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0a0e1a"/>
+      <stop offset="100%" stop-color="#060910"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff3a28" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#ff3a28" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="200" fill="url(#glow)"/>
+  <!-- target rings -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#ff3a28" stroke-opacity="0.15" stroke-width="2"/>
+  <circle cx="256" cy="256" r="144" fill="none" stroke="#ff3a28" stroke-opacity="0.25" stroke-width="2"/>
+  <circle cx="256" cy="256" r="108" fill="none" stroke="#ff3a28" stroke-opacity="0.4" stroke-width="2"/>
+  <circle cx="256" cy="256" r="72" fill="none" stroke="#ff3a28" stroke-opacity="0.6" stroke-width="2"/>
+  <circle cx="256" cy="256" r="36" fill="none" stroke="#ff3a28" stroke-opacity="0.85" stroke-width="2"/>
+  <!-- crosshair -->
+  <line x1="96" y1="256" x2="416" y2="256" stroke="#ff3a28" stroke-width="1.5" opacity="0.6"/>
+  <line x1="256" y1="96" x2="256" y2="416" stroke="#ff3a28" stroke-width="1.5" opacity="0.6"/>
+  <!-- center -->
+  <circle cx="256" cy="256" r="10" fill="#ff3a28"/>
+  <circle cx="256" cy="256" r="20" fill="#ff3a28" fill-opacity="0.2"/>
+  <!-- title text -->
+  <text x="256" y="470" font-family="Orbitron, monospace" font-size="32" font-weight="900" fill="#e8ecf5" text-anchor="middle" letter-spacing="4">E-TARGET</text>
+</svg>

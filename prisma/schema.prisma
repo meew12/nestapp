@@ -1,0 +1,131 @@
+// ═══════════════════════════════════════════════════════════
+//  E-TARGET — Prisma Schema
+//  Models: User, Session, Shot, SubscriptionPlan,
+//          UserSubscription, Payment
+// ═══════════════════════════════════════════════════════════
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  role         String   @default("user") // "user" | "admin"
+  avatarColor  String   @default("#ff3a28")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sessions       Session[]
+  subscriptions  UserSubscription[]
+  payments       Payment[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  trainingMode Boolean  @default(false)
+  totalScore   Int      @default(0)
+  durationSec  Int      @default(0)
+  bestScore    Int      @default(0)
+  avgScore     Float    @default(0)
+  shotCount    Int      @default(0)
+  targetSize   String   @default("standard") // standard | large | small
+  distanceM    Float    @default(0) // estimated shooting distance (m)
+  captureMode  String   @default("camera") // camera | simulator — how shots were captured
+  weather      String?  // JSON: { temp, wind, condition, humidity } environmental data
+  notes        String?
+  // Training drill metadata (null for free sessions)
+  drillType    String?  // bullseye | speed | precision | rapid | marksman | null
+  drillPassed  Boolean? // whether the drill's pass criteria was met
+  drillGoal    String?  // JSON: { shotCount, timeLimitSec, targetScore, targetGroupCm }
+  createdAt    DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shots  Shot[]
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([drillType])
+}
+
+model Shot {
+  id        String  @id @default(cuid())
+  sessionId String
+  index     Int     // order in the session (1-based)
+  x         Float   // canvas x
+  y         Float   // canvas y
+  radius    Float   // detected blob radius
+  score     Int     // 0-10 (0 = training mode, no score)
+  isLatest  Boolean @default(false) // flag: latest in session (red marker)
+  timestamp Int     // ms since session start
+  distanceM Float   @default(0) // estimated distance from target center (cm)
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+model SubscriptionPlan {
+  id              String   @id @default(cuid())
+  name            String
+  description     String
+  priceARS        Float    // price in Argentine Pesos
+  durationDays    Int      // billing period length
+  mpPlanId        String?  // MercadoPago plan/preference id
+  features        String   // JSON string of feature list
+  isActive        Boolean  @default(true)
+  isFeatured      Boolean  @default(false)
+  maxShotsPerDay  Int      @default(0) // 0 = unlimited
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  subscriptions UserSubscription[]
+}
+
+model UserSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  planId    String
+  status    String   @default("active") // active | expired | cancelled | pending
+  startDate DateTime @default(now())
+  endDate   DateTime
+  autoRenew Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+}
+
+model Payment {
+  id            String   @id @default(cuid())
+  userId        String
+  planId        String?
+  amount        Float
+  currency      String   @default("ARS")
+  status        String   @default("pending") // pending | approved | rejected | refunded | cancelled
+  mpPaymentId   String?  // MercadoPago payment id
+  mpPreferenceId String? // MercadoPago preference id
+  mpStatus      String?  // raw MP status
+  method        String?  // credit_card | debit_card | cash | etc
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
