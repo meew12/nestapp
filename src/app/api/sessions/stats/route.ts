@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { queryFirst } from '@/lib/db-direct'
 import { withUser } from '@/lib/api'
 
 /**
@@ -7,27 +7,36 @@ import { withUser } from '@/lib/api'
  */
 export async function GET() {
   return withUser(async (user) => {
-    const [agg, sessions] = await Promise.all([
-      db.session.aggregate({
-        where: { userId: user.id },
-        _sum: { durationSec: true },
-        _max: { bestScore: true },
-        _avg: { avgScore: true },
-        _count: { _all: true },
-      }),
-      db.shot.aggregate({
-        where: { session: { userId: user.id } },
-        _count: { _all: true },
-      }),
+    const [agg, shotAgg] = await Promise.all([
+      queryFirst<{ cnt: number; sumDur: number; maxBest: number; avgAvg: number }>(
+        `SELECT COUNT(*) AS cnt,
+                COALESCE(SUM(durationSec), 0) AS sumDur,
+                COALESCE(MAX(bestScore), 0) AS maxBest,
+                COALESCE(AVG(avgScore), 0) AS avgAvg
+         FROM "Session" WHERE userId = ?`,
+        [user.id],
+      ),
+      queryFirst<{ cnt: number }>(
+        `SELECT COUNT(*) AS cnt
+         FROM "Shot" sh JOIN "Session" s ON s.id = sh.sessionId
+         WHERE s.userId = ?`,
+        [user.id],
+      ),
     ])
 
+    const sessionCount = agg?.cnt ?? 0
+    const sumDur = agg?.sumDur ?? 0
+    const maxBest = agg?.maxBest ?? 0
+    const avgAvg = agg?.avgAvg ?? 0
+    const shotRecords = shotAgg?.cnt ?? 0
+
     return NextResponse.json({
-      totalShots: agg._count._all > 0 ? agg._count._all : 0,
-      bestScore: agg._max.bestScore ?? 0,
-      sessionCount: agg._count._all,
-      totalDurationSec: agg._sum.durationSec ?? 0,
-      avgScore: Number(agg._avg.avgScore ?? 0),
-      totalShotRecords: sessions._count._all,
+      totalShots: sessionCount > 0 ? sessionCount : 0,
+      bestScore: maxBest,
+      sessionCount,
+      totalDurationSec: sumDur,
+      avgScore: Number(avgAvg),
+      totalShotRecords: shotRecords,
     })
   })
 }

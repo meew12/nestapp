@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query, toDate, toBool } from '@/lib/db-direct'
 import { withUser } from '@/lib/api'
 
 /**
@@ -153,13 +153,54 @@ function findStreakDay(sessionsAsc: SessionRow[], target: number): Date | null {
 
 export async function GET() {
   return withUser(async (user) => {
-    const rows = await db.session.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'asc' },
-      include: { shots: { select: { score: true } } },
-    })
+    // Load sessions (ascending by createdAt) and the score of every shot
+    // belonging to those sessions, then group shots by sessionId in JS so
+    // the existing achievement/streak computation logic stays untouched.
+    const [sessionRows, shotRows] = await Promise.all([
+      query<{
+        id: string
+        trainingMode: number
+        totalScore: number
+        bestScore: number
+        avgScore: number
+        shotCount: number
+        durationSec: number
+        targetSize: string
+        distanceM: number
+        createdAt: string
+      }>(
+        `SELECT id, trainingMode, totalScore, bestScore, avgScore, shotCount, durationSec, targetSize, distanceM, createdAt
+         FROM "Session" WHERE userId = ? ORDER BY createdAt ASC`,
+        [user.id],
+      ),
+      query<{ sessionId: string; score: number }>(
+        `SELECT sh.sessionId, sh.score
+         FROM "Shot" sh JOIN "Session" s ON s.id = sh.sessionId
+         WHERE s.userId = ? ORDER BY sh.sessionId, sh.index`,
+        [user.id],
+      ),
+    ])
 
-    const sessions = rows as SessionRow[]
+    const shotsBySession = new Map<string, Array<{ score: number }>>()
+    for (const sh of shotRows) {
+      const arr = shotsBySession.get(sh.sessionId)
+      if (arr) arr.push({ score: sh.score })
+      else shotsBySession.set(sh.sessionId, [{ score: sh.score }])
+    }
+
+    const sessions: SessionRow[] = sessionRows.map((s) => ({
+      id: s.id,
+      trainingMode: toBool(s.trainingMode),
+      totalScore: s.totalScore,
+      bestScore: s.bestScore,
+      avgScore: s.avgScore,
+      shotCount: s.shotCount,
+      durationSec: s.durationSec,
+      targetSize: s.targetSize,
+      distanceM: s.distanceM,
+      createdAt: toDate(s.createdAt),
+      shots: shotsBySession.get(s.id) ?? [],
+    }))
 
     // Score distribution: buckets 10..1
     const scoreDistribution: Record<string, number> = {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { queryFirst, toDate } from '@/lib/db-direct'
 import { createToken, setSessionCookie, verifyPassword } from '@/lib/auth'
 import { readJson, toErrorResponse } from '@/lib/api'
 
@@ -14,7 +14,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
     }
 
-    const user = await db.user.findUnique({ where: { email } })
+    const user = await queryFirst<{
+      id: string
+      email: string
+      name: string | null
+      passwordHash: string
+      role: string
+      avatarColor: string
+      createdAt: string
+    }>(`SELECT id, email, name, passwordHash, role, avatarColor, createdAt FROM "User" WHERE email = ?`, [email])
+
     if (!user) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
@@ -39,7 +48,7 @@ export async function POST(req: Request) {
         name: user.name,
         role: user.role as 'user' | 'admin',
         avatarColor: user.avatarColor,
-        createdAt: user.createdAt.toISOString(),
+        createdAt: toDate(user.createdAt).toISOString(),
       },
     })
     res.headers.set('Set-Cookie', setSessionCookie(token))

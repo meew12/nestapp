@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query, execute, generateId, nowISO, toDate, toBool, fromBool } from '@/lib/db-direct'
 import { parseFeatures, readJson, withAdmin } from '@/lib/api'
 
 /**
@@ -7,16 +7,27 @@ import { parseFeatures, readJson, withAdmin } from '@/lib/api'
  */
 export async function GET() {
   return withAdmin(async () => {
-    const plans = await db.subscriptionPlan.findMany({
-      orderBy: { sortOrder: 'asc' },
-      include: {
-        _count: {
-          select: {
-            subscriptions: { where: { status: 'active' } },
-          },
-        },
-      },
-    })
+    const plans = await query<{
+      id: string
+      name: string
+      description: string
+      priceARS: number
+      durationDays: number
+      mpPlanId: string | null
+      features: string
+      isActive: number
+      isFeatured: number
+      maxShotsPerDay: number
+      sortOrder: number
+      createdAt: string
+      activeCount: number | bigint
+    }>(
+      `SELECT p.*,
+              (SELECT COUNT(*) FROM "UserSubscription" us
+               WHERE us.planId = p.id AND us.status = 'active') as activeCount
+       FROM "SubscriptionPlan" p
+       ORDER BY p.sortOrder ASC`,
+    )
 
     return NextResponse.json(
       plans.map((p) => ({
@@ -27,13 +38,13 @@ export async function GET() {
         durationDays: p.durationDays,
         mpPlanId: p.mpPlanId,
         features: parseFeatures(p.features),
-        isActive: p.isActive,
-        isFeatured: p.isFeatured,
+        isActive: toBool(p.isActive),
+        isFeatured: toBool(p.isFeatured),
         maxShotsPerDay: p.maxShotsPerDay,
         sortOrder: p.sortOrder,
-        subscriberCount: p._count.subscriptions,
-        createdAt: p.createdAt.toISOString(),
-      }))
+        subscriberCount: Number(p.activeCount),
+        createdAt: toDate(p.createdAt).toISOString(),
+      })),
     )
   })
 }
@@ -60,34 +71,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'name and description are required' }, { status: 400 })
     }
 
-    const plan = await db.subscriptionPlan.create({
-      data: {
-        name: body.name,
-        description: body.description,
-        priceARS: Number(body.priceARS) || 0,
-        durationDays: Number(body.durationDays) || 30,
-        features: JSON.stringify(body.features || []),
-        isActive: body.isActive ?? true,
-        isFeatured: body.isFeatured ?? false,
-        maxShotsPerDay: Number(body.maxShotsPerDay) || 0,
-        sortOrder: Number(body.sortOrder) || 0,
-      },
-    })
+    const id = generateId()
+    const now = nowISO()
+    const name = body.name
+    const description = body.description
+    const priceARS = Number(body.priceARS) || 0
+    const durationDays = Number(body.durationDays) || 30
+    const features = JSON.stringify(body.features || [])
+    const isActive = fromBool(body.isActive ?? true)
+    const isFeatured = fromBool(body.isFeatured ?? false)
+    const maxShotsPerDay = Number(body.maxShotsPerDay) || 0
+    const sortOrder = Number(body.sortOrder) || 0
+
+    await execute(
+      `INSERT INTO "SubscriptionPlan"
+        (id, name, description, priceARS, durationDays, features, isActive, isFeatured, maxShotsPerDay, sortOrder, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name, description, priceARS, durationDays, features, isActive, isFeatured, maxShotsPerDay, sortOrder, now, now],
+    )
 
     return NextResponse.json(
       {
-        id: plan.id,
-        name: plan.name,
-        description: plan.description,
-        priceARS: plan.priceARS,
-        durationDays: plan.durationDays,
-        features: parseFeatures(plan.features),
-        isActive: plan.isActive,
-        isFeatured: plan.isFeatured,
-        maxShotsPerDay: plan.maxShotsPerDay,
-        sortOrder: plan.sortOrder,
+        id,
+        name,
+        description,
+        priceARS,
+        durationDays,
+        features: parseFeatures(features),
+        isActive: toBool(isActive),
+        isFeatured: toBool(isFeatured),
+        maxShotsPerDay,
+        sortOrder,
       },
-      { status: 201 }
+      { status: 201 },
     )
   })
 }

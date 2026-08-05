@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query, toDate, toBool } from '@/lib/db-direct'
 import { withUser } from '@/lib/api'
 
 /**
@@ -12,30 +12,35 @@ import { withUser } from '@/lib/api'
 export async function GET() {
   return withUser(async (user) => {
     // Fetch all drill sessions for this user
-    const drillSessions = await db.session.findMany({
-      where: { userId: user.id, drillType: { not: null } },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        drillType: true,
-        drillPassed: true,
-        totalScore: true,
-        avgScore: true,
-        shotCount: true,
-        durationSec: true,
-        createdAt: true,
-      },
-    })
+    const drillSessions = await query<{
+      id: string
+      drillType: string | null
+      drillPassed: number | null
+      totalScore: number
+      avgScore: number
+      shotCount: number
+      durationSec: number
+      createdAt: string
+    }>(
+      `SELECT id, drillType, drillPassed, totalScore, avgScore, shotCount, durationSec, createdAt
+       FROM "Session"
+       WHERE userId = ? AND drillType IS NOT NULL
+       ORDER BY createdAt DESC`,
+      [user.id],
+    )
 
     // Group by drillType and compute best records
-    const byType = new Map<string, {
-      drillType: string
-      bestScore: number
-      bestAvg: number
-      passedCount: number
-      attempts: number
-      lastAttemptAt: Date
-    }>()
+    const byType = new Map<
+      string,
+      {
+        drillType: string
+        bestScore: number
+        bestAvg: number
+        passedCount: number
+        attempts: number
+        lastAttemptAt: Date
+      }
+    >()
 
     for (const s of drillSessions) {
       if (!s.drillType) continue
@@ -43,17 +48,19 @@ export async function GET() {
       if (existing) {
         existing.bestScore = Math.max(existing.bestScore, s.totalScore)
         existing.bestAvg = Math.max(existing.bestAvg, s.avgScore)
-        if (s.drillPassed) existing.passedCount += 1
+        if (toBool(s.drillPassed)) existing.passedCount += 1
         existing.attempts += 1
-        if (s.createdAt > existing.lastAttemptAt) existing.lastAttemptAt = s.createdAt
+        if (toDate(s.createdAt) > existing.lastAttemptAt) {
+          existing.lastAttemptAt = toDate(s.createdAt)
+        }
       } else {
         byType.set(s.drillType, {
           drillType: s.drillType,
           bestScore: s.totalScore,
           bestAvg: s.avgScore,
-          passedCount: s.drillPassed ? 1 : 0,
+          passedCount: toBool(s.drillPassed) ? 1 : 0,
           attempts: 1,
-          lastAttemptAt: s.createdAt,
+          lastAttemptAt: toDate(s.createdAt),
         })
       }
     }

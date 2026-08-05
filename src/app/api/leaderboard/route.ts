@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query, queryFirst, toDate } from '@/lib/db-direct'
 import { withUser } from '@/lib/api'
 
 /**
@@ -15,49 +15,78 @@ import { withUser } from '@/lib/api'
 export async function GET() {
   return withUser(async (user) => {
     // ── Best single-session score ──
-    const bestSessions = await db.session.findMany({
-      where: { trainingMode: false },
-      orderBy: { totalScore: 'desc' },
-      take: 50,
-      select: {
-        totalScore: true,
-        shotCount: true,
-        createdAt: true,
-        user: { select: { id: true, name: true, avatarColor: true } },
-      },
-    })
+    const bestSessions = await query<{
+      totalScore: number
+      shotCount: number
+      createdAt: string
+      userId: string
+      name: string | null
+      avatarColor: string
+    }>(
+      `SELECT s.totalScore, s.shotCount, s.createdAt,
+              u.id as userId, u.name, u.avatarColor
+       FROM "Session" s
+       JOIN "User" u ON u.id = s.userId
+       WHERE s.trainingMode = 0
+       ORDER BY s.totalScore DESC
+       LIMIT 50`,
+    )
 
     // Deduplicate: keep only each user's best session
-    const bestByUser = new Map<string, { name: string | null; avatarColor: string; score: number; shotCount: number; createdAt: Date }>()
+    const bestByUser = new Map<
+      string,
+      {
+        name: string | null
+        avatarColor: string
+        score: number
+        shotCount: number
+        createdAt: Date
+      }
+    >()
     for (const s of bestSessions) {
-      const uid = s.user.id
+      const uid = s.userId
       if (!bestByUser.has(uid) || (bestByUser.get(uid)?.score ?? 0) < s.totalScore) {
         bestByUser.set(uid, {
-          name: s.user.name,
-          avatarColor: s.user.avatarColor,
+          name: s.name,
+          avatarColor: s.avatarColor,
           score: s.totalScore,
           shotCount: s.shotCount,
-          createdAt: s.createdAt,
+          createdAt: toDate(s.createdAt),
         })
       }
     }
     const bestRanked = Array.from(bestByUser.entries())
-      .map(([uid, data]) => ({ userId: uid, ...data }))
+      .map(([uid, data]) => ({
+        userId: uid,
+        name: data.name,
+        avatarColor: data.avatarColor,
+        score: data.score,
+        shotCount: data.shotCount,
+        createdAt: data.createdAt,
+      }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 10)
 
     // ── Average session score (min 3 sessions) ──
-    // SQLite + Prisma groupBy having clause is limited; fetch and aggregate in JS.
-    const allCompSessions = await db.session.findMany({
-      where: { trainingMode: false },
-      select: {
-        userId: true,
-        avgScore: true,
-        totalScore: true,
-        user: { select: { name: true, avatarColor: true } },
-      },
-    })
-    const avgByUser = new Map<string, { name: string | null; avatarColor: string; sum: number; count: number }>()
+    // SQLite groupBy with HAVING is possible but Prisma's groupBy is limited;
+    // fetch all competition sessions and aggregate in JS (same as original).
+    const allCompSessions = await query<{
+      userId: string
+      avgScore: number
+      totalScore: number
+      name: string | null
+      avatarColor: string
+    }>(
+      `SELECT s.userId, s.avgScore, s.totalScore,
+              u.name, u.avatarColor
+       FROM "Session" s
+       JOIN "User" u ON u.id = s.userId
+       WHERE s.trainingMode = 0`,
+    )
+    const avgByUser = new Map<
+      string,
+      { name: string | null; avatarColor: string; sum: number; count: number }
+    >()
     for (const s of allCompSessions) {
       const existing = avgByUser.get(s.userId)
       if (existing) {
@@ -65,8 +94,8 @@ export async function GET() {
         existing.count += 1
       } else {
         avgByUser.set(s.userId, {
-          name: s.user.name,
-          avatarColor: s.user.avatarColor,
+          name: s.name,
+          avatarColor: s.avatarColor,
           sum: s.avgScore,
           count: 1,
         })
@@ -85,23 +114,31 @@ export async function GET() {
       .slice(0, 10)
 
     // ── Bullseyes (10-ring hits) ──
-    const allBullseyeShots = await db.shot.findMany({
-      where: { score: 10 },
-      select: {
-        sessionId: true,
-        session: { select: { userId: true, user: { select: { name: true, avatarColor: true } } } },
-      },
-    })
-    const userBullseyeCounts = new Map<string, { name: string | null; avatarColor: string; count: number }>()
+    const allBullseyeShots = await query<{
+      sessionId: string
+      userId: string
+      name: string | null
+      avatarColor: string
+    }>(
+      `SELECT sh.sessionId, s.userId, u.name, u.avatarColor
+       FROM "Shot" sh
+       JOIN "Session" s ON s.id = sh.sessionId
+       JOIN "User" u ON u.id = s.userId
+       WHERE sh.score = 10`,
+    )
+    const userBullseyeCounts = new Map<
+      string,
+      { name: string | null; avatarColor: string; count: number }
+    >()
     for (const shot of allBullseyeShots) {
-      const uid = shot.session.userId
+      const uid = shot.userId
       const existing = userBullseyeCounts.get(uid)
       if (existing) {
         existing.count += 1
       } else {
         userBullseyeCounts.set(uid, {
-          name: shot.session.user.name,
-          avatarColor: shot.session.user.avatarColor,
+          name: shot.name,
+          avatarColor: shot.avatarColor,
           count: 1,
         })
       }
@@ -117,12 +154,16 @@ export async function GET() {
     const userBullseyeRank = bullseyeRanked.findIndex((r) => r.userId === user.id) + 1
 
     // User's own totals (for display when not in top 10)
-    const userTotals = await db.session.aggregate({
-      where: { userId: user.id, trainingMode: false },
-      _max: { totalScore: true },
-      _avg: { avgScore: true },
-      _count: { _all: true },
-    })
+    const userTotals = await queryFirst<{
+      maxTotal: number | null
+      avgAvg: number | null
+      cnt: number | bigint
+    }>(
+      `SELECT MAX(totalScore) as maxTotal, AVG(avgScore) as avgAvg, COUNT(*) as cnt
+       FROM "Session"
+       WHERE userId = ? AND trainingMode = 0`,
+      [user.id],
+    )
     const userBullseyeTotal = userBullseyeCounts.get(user.id)?.count ?? 0
 
     return NextResponse.json({
@@ -138,9 +179,9 @@ export async function GET() {
           bullseyes: userBullseyeRank || null,
         },
         totals: {
-          bestScore: userTotals._max.totalScore ?? 0,
-          avgScore: userTotals._avg.avgScore ?? 0,
-          sessionCount: userTotals._count._all,
+          bestScore: userTotals?.maxTotal ?? 0,
+          avgScore: userTotals?.avgAvg ?? 0,
+          sessionCount: Number(userTotals?.cnt ?? 0),
           bullseyes: userBullseyeTotal,
         },
       },

@@ -1,28 +1,59 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query, toDate } from '@/lib/db-direct'
 import { withUser } from '@/lib/api'
 
 /**
  * GET /api/subscriptions/history — list the current user's payments with plan info.
+ *
+ * Direct @libsql/client implementation (no Prisma). Mirrors the original
+ * `db.payment.findMany` + `db.subscriptionPlan.findMany({ where: { id: { in } } })`.
  */
+interface PaymentRow {
+  id: string
+  amount: number
+  currency: string
+  status: string
+  mpPaymentId: string | null
+  mpPreferenceId: string | null
+  method: string | null
+  description: string | null
+  createdAt: string
+  planId: string | null
+}
+
+interface PlanRow {
+  id: string
+  name: string
+  priceARS: number
+  durationDays: number
+}
+
 export async function GET() {
   return withUser(async (user) => {
-    const payments = await db.payment.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-    })
-
-    // Payment → Plan has no Prisma relation; resolve plan info manually.
-    const planIds = Array.from(
-      new Set(payments.map((p) => p.planId).filter((x): x is string => !!x))
+    const payments = await query<PaymentRow>(
+      `SELECT id, amount, currency, status, mpPaymentId, mpPreferenceId,
+              method, description, createdAt, planId
+         FROM "Payment"
+        WHERE userId = ?
+        ORDER BY createdAt DESC`,
+      [user.id],
     )
-    const planRows = planIds.length
-      ? await db.subscriptionPlan.findMany({
-          where: { id: { in: planIds } },
-          select: { id: true, name: true, priceARS: true, durationDays: true },
-        })
-      : []
-    const planMap = new Map(planRows.map((p) => [p.id, p]))
+
+    // Payment → Plan has no DB-level relation; resolve plan info manually.
+    const planIds = Array.from(
+      new Set(payments.map((p) => p.planId).filter((x): x is string => !!x)),
+    )
+    const planMap = new Map<string, PlanRow>()
+    if (planIds.length) {
+      const placeholders = planIds.map(() => '?').join(', ')
+      const planRows = await query<PlanRow>(
+        `SELECT id, name, priceARS, durationDays
+           FROM "SubscriptionPlan"
+          WHERE id IN (${placeholders})`,
+        planIds,
+      )
+      for (const p of planRows) planMap.set(p.id, p)
+    }
 
     return NextResponse.json(
       payments.map((p) => {
@@ -36,7 +67,7 @@ export async function GET() {
           mpPreferenceId: p.mpPreferenceId,
           method: p.method,
           description: p.description,
-          createdAt: p.createdAt.toISOString(),
+          createdAt: toDate(p.createdAt).toISOString(),
           plan: plan
             ? {
                 id: plan.id,
@@ -46,7 +77,7 @@ export async function GET() {
               }
             : null,
         }
-      })
+      }),
     )
   })
 }

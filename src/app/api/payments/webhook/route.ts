@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { queryFirst, execute, nowISO } from '@/lib/db-direct'
 import { activatePendingSubscription, readJson } from '@/lib/api'
 import { processWebhook } from '@/lib/mercadopago'
 
@@ -13,7 +13,19 @@ import { processWebhook } from '@/lib/mercadopago'
  *
  * MUST return 200 quickly. NEVER throw to the caller — wrap every step in
  * try/catch so a malformed payload doesn't cause MP to retry indefinitely.
+ *
+ * Implemented with @libsql/client directly (no Prisma).
  */
+interface PaymentRow {
+  id: string
+  userId: string
+  planId: string | null
+  amount: number
+  currency: string
+  status: string
+  mpPaymentId: string | null
+}
+
 export async function POST(req: Request) {
   try {
     const url = new URL(req.url)
@@ -50,13 +62,29 @@ export async function POST(req: Request) {
     }
 
     // Look up the matching Payment record by mpPaymentId OR external_reference.
-    let paymentRow = null as Awaited<ReturnType<typeof db.payment.findFirst>>
+    let paymentRow: PaymentRow | null = null
     if (payment.id) {
-      paymentRow = await db.payment.findFirst({
-        where: { OR: [{ mpPaymentId: String(payment.id) }, { id: externalRef || undefined }] },
-      })
+      paymentRow = await queryFirst<PaymentRow>(
+        `SELECT id, userId, planId, amount, currency, status, mpPaymentId
+           FROM "Payment"
+          WHERE mpPaymentId = ?`,
+        [String(payment.id)],
+      )
+      if (!paymentRow && externalRef) {
+        paymentRow = await queryFirst<PaymentRow>(
+          `SELECT id, userId, planId, amount, currency, status, mpPaymentId
+             FROM "Payment"
+            WHERE id = ?`,
+          [externalRef],
+        )
+      }
     } else if (externalRef) {
-      paymentRow = await db.payment.findUnique({ where: { id: externalRef } })
+      paymentRow = await queryFirst<PaymentRow>(
+        `SELECT id, userId, planId, amount, currency, status, mpPaymentId
+           FROM "Payment"
+          WHERE id = ?`,
+        [externalRef],
+      )
     }
 
     if (!paymentRow) {
@@ -65,13 +93,10 @@ export async function POST(req: Request) {
     }
 
     // Update raw MP status fields.
-    await db.payment.update({
-      where: { id: paymentRow.id },
-      data: {
-        mpPaymentId: paymentRow.mpPaymentId || String(payment.id),
-        mpStatus: payment.status,
-      },
-    })
+    await execute(
+      `UPDATE "Payment" SET mpPaymentId = ?, mpStatus = ?, updatedAt = ? WHERE id = ?`,
+      [paymentRow.mpPaymentId || String(payment.id), payment.status, nowISO(), paymentRow.id],
+    )
 
     if (payment.status === 'approved' && paymentRow.status !== 'approved') {
       await activatePendingSubscription({
@@ -84,15 +109,18 @@ export async function POST(req: Request) {
         mpPaymentId: paymentRow.mpPaymentId,
       })
     } else if (payment.status === 'rejected' || payment.status === 'cancelled') {
-      await db.payment.update({
-        where: { id: paymentRow.id },
-        data: { status: payment.status === 'cancelled' ? 'cancelled' : 'rejected' },
-      })
+      const finalStatus = payment.status === 'cancelled' ? 'cancelled' : 'rejected'
+      await execute(
+        `UPDATE "Payment" SET status = ?, updatedAt = ? WHERE id = ?`,
+        [finalStatus, nowISO(), paymentRow.id],
+      )
       if (paymentRow.planId) {
-        await db.userSubscription.updateMany({
-          where: { userId: paymentRow.userId, planId: paymentRow.planId, status: 'pending' },
-          data: { status: 'cancelled' },
-        })
+        await execute(
+          `UPDATE "UserSubscription"
+              SET status = ?
+            WHERE userId = ? AND planId = ? AND status = ?`,
+          ['cancelled', paymentRow.userId, paymentRow.planId, 'pending'],
+        )
       }
     }
 

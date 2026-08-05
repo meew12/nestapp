@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { query, queryFirst, toDate } from '@/lib/db-direct'
 import { withAdmin } from '@/lib/api'
 
 /**
@@ -8,72 +8,89 @@ import { withAdmin } from '@/lib/api'
 export async function GET() {
   return withAdmin(async () => {
     const [
-      totalUsers,
-      totalSessions,
-      totalShots,
-      revenueAgg,
-      activeSubscriptions,
+      userCountRow,
+      sessionCountRow,
+      shotCountRow,
+      revenueRow,
+      activeSubsRow,
       recentPayments,
       recentUsers,
       plans,
     ] = await Promise.all([
-      db.user.count(),
-      db.session.count(),
-      db.shot.count(),
-      db.payment.aggregate({
-        where: { status: 'approved' },
-        _sum: { amount: true },
-      }),
-      db.userSubscription.count({ where: { status: 'active' } }),
-      db.payment.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: {
-          user: { select: { email: true, name: true } },
-        },
-      }),
-      db.user.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          role: true,
-          avatarColor: true,
-          createdAt: true,
-        },
-      }),
-      db.subscriptionPlan.findMany({
-        include: { _count: { select: { subscriptions: true } } },
-        orderBy: { sortOrder: 'asc' },
-      }),
+      queryFirst<{ cnt: number | bigint }>('SELECT COUNT(*) as cnt FROM "User"'),
+      queryFirst<{ cnt: number | bigint }>('SELECT COUNT(*) as cnt FROM "Session"'),
+      queryFirst<{ cnt: number | bigint }>('SELECT COUNT(*) as cnt FROM "Shot"'),
+      queryFirst<{ sumAmt: number | bigint | null }>(
+        'SELECT COALESCE(SUM(amount),0) as sumAmt FROM "Payment" WHERE status=?',
+        ['approved'],
+      ),
+      queryFirst<{ cnt: number | bigint }>(
+        'SELECT COUNT(*) as cnt FROM "UserSubscription" WHERE status=?',
+        ['active'],
+      ),
+      query<{
+        id: string
+        amount: number
+        currency: string
+        status: string
+        createdAt: string
+        planId: string | null
+        userEmail: string | null
+        userName: string | null
+      }>(
+        `SELECT p.id, p.amount, p.currency, p.status, p.createdAt, p.planId,
+                u.email as userEmail, u.name as userName
+         FROM "Payment" p
+         LEFT JOIN "User" u ON u.id = p.userId
+         ORDER BY p.createdAt DESC LIMIT 5`,
+      ),
+      query<{
+        id: string
+        email: string
+        name: string | null
+        role: string
+        avatarColor: string
+        createdAt: string
+      }>(
+        `SELECT id, email, name, role, avatarColor, createdAt
+         FROM "User" ORDER BY createdAt DESC LIMIT 5`,
+      ),
+      query<{
+        id: string
+        name: string
+        subCount: number | bigint
+      }>(
+        `SELECT p.id, p.name,
+                (SELECT COUNT(*) FROM "UserSubscription" us WHERE us.planId = p.id) as subCount
+         FROM "SubscriptionPlan" p
+         ORDER BY p.sortOrder ASC`,
+      ),
     ])
 
-    // Payment → Plan has no Prisma relation, so resolve plan names manually.
+    // Payment → Plan has no FK relation, so resolve plan names manually.
     const planIds = Array.from(
-      new Set(recentPayments.map((p) => p.planId).filter((x): x is string => !!x))
+      new Set(recentPayments.map((p) => p.planId).filter((x): x is string => !!x)),
     )
     const planRows = planIds.length
-      ? await db.subscriptionPlan.findMany({
-          where: { id: { in: planIds } },
-          select: { id: true, name: true },
-        })
+      ? await query<{ id: string; name: string }>(
+          `SELECT id, name FROM "SubscriptionPlan" WHERE id IN (${planIds.map(() => '?').join(',')})`,
+          planIds,
+        )
       : []
     const planMap = new Map(planRows.map((p) => [p.id, p]))
 
     const planDistribution = plans.map((p) => ({
       id: p.id,
       name: p.name,
-      subscriberCount: p._count.subscriptions,
+      subscriberCount: Number(p.subCount),
     }))
 
     return NextResponse.json({
-      totalUsers,
-      totalSessions,
-      totalShots,
-      totalRevenue: Number(revenueAgg._sum.amount ?? 0),
-      activeSubscriptions,
+      totalUsers: Number(userCountRow?.cnt ?? 0),
+      totalSessions: Number(sessionCountRow?.cnt ?? 0),
+      totalShots: Number(shotCountRow?.cnt ?? 0),
+      totalRevenue: Number(revenueRow?.sumAmt ?? 0),
+      activeSubscriptions: Number(activeSubsRow?.cnt ?? 0),
       recentPayments: recentPayments.map((p) => {
         const plan = p.planId ? planMap.get(p.planId) : null
         return {
@@ -81,8 +98,11 @@ export async function GET() {
           amount: p.amount,
           currency: p.currency,
           status: p.status,
-          createdAt: p.createdAt.toISOString(),
-          user: p.user ? { email: p.user.email, name: p.user.name } : null,
+          createdAt: toDate(p.createdAt).toISOString(),
+          user:
+            p.userEmail != null || p.userName != null
+              ? { email: p.userEmail, name: p.userName }
+              : null,
           plan: plan ? { id: plan.id, name: plan.name } : null,
         }
       }),
@@ -92,7 +112,7 @@ export async function GET() {
         name: u.name,
         role: u.role as 'user' | 'admin',
         avatarColor: u.avatarColor,
-        createdAt: u.createdAt.toISOString(),
+        createdAt: toDate(u.createdAt).toISOString(),
       })),
       planDistribution,
     })

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import type { InArgs } from '@libsql/client'
+import { queryFirst, execute, nowISO, toBool, fromBool } from '@/lib/db-direct'
 import { parseFeatures, readJson, withAdmin } from '@/lib/api'
 
 /**
@@ -22,24 +23,86 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }>(req)
     if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
 
-    const existing = await db.subscriptionPlan.findUnique({ where: { id } })
+    const existing = await queryFirst<{ id: string }>(
+      `SELECT id FROM "SubscriptionPlan" WHERE id = ?`,
+      [id],
+    )
     if (!existing) {
       return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
     }
 
-    const updates: Record<string, unknown> = {}
-    if (body.name !== undefined) updates.name = body.name
-    if (body.description !== undefined) updates.description = body.description
-    if (body.priceARS !== undefined) updates.priceARS = Number(body.priceARS)
-    if (body.durationDays !== undefined) updates.durationDays = Number(body.durationDays)
-    if (body.features !== undefined) updates.features = JSON.stringify(body.features)
-    if (body.isActive !== undefined) updates.isActive = body.isActive
-    if (body.isFeatured !== undefined) updates.isFeatured = body.isFeatured
-    if (body.maxShotsPerDay !== undefined) updates.maxShotsPerDay = Number(body.maxShotsPerDay)
-    if (body.sortOrder !== undefined) updates.sortOrder = Number(body.sortOrder)
-    if (body.mpPlanId !== undefined) updates.mpPlanId = body.mpPlanId
+    // Build dynamic UPDATE — only set fields that are present in the body.
+    const sets: string[] = []
+    const args: InArgs = []
+    if (body.name !== undefined) {
+      sets.push('name = ?')
+      args.push(body.name)
+    }
+    if (body.description !== undefined) {
+      sets.push('description = ?')
+      args.push(body.description)
+    }
+    if (body.priceARS !== undefined) {
+      sets.push('priceARS = ?')
+      args.push(Number(body.priceARS))
+    }
+    if (body.durationDays !== undefined) {
+      sets.push('durationDays = ?')
+      args.push(Number(body.durationDays))
+    }
+    if (body.features !== undefined) {
+      sets.push('features = ?')
+      args.push(JSON.stringify(body.features))
+    }
+    if (body.isActive !== undefined) {
+      sets.push('isActive = ?')
+      args.push(fromBool(body.isActive))
+    }
+    if (body.isFeatured !== undefined) {
+      sets.push('isFeatured = ?')
+      args.push(fromBool(body.isFeatured))
+    }
+    if (body.maxShotsPerDay !== undefined) {
+      sets.push('maxShotsPerDay = ?')
+      args.push(Number(body.maxShotsPerDay))
+    }
+    if (body.sortOrder !== undefined) {
+      sets.push('sortOrder = ?')
+      args.push(Number(body.sortOrder))
+    }
+    if (body.mpPlanId !== undefined) {
+      sets.push('mpPlanId = ?')
+      args.push(body.mpPlanId)
+    }
+    // updatedAt is NOT NULL → always set.
+    sets.push('updatedAt = ?')
+    args.push(nowISO())
 
-    const plan = await db.subscriptionPlan.update({ where: { id }, data: updates })
+    args.push(id)
+    await execute(
+      `UPDATE "SubscriptionPlan" SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    )
+
+    const plan = await queryFirst<{
+      id: string
+      name: string
+      description: string
+      priceARS: number
+      durationDays: number
+      mpPlanId: string | null
+      features: string
+      isActive: number
+      isFeatured: number
+      maxShotsPerDay: number
+      sortOrder: number
+      createdAt: string
+      updatedAt: string
+    }>(`SELECT * FROM "SubscriptionPlan" WHERE id = ?`, [id])
+
+    if (!plan) {
+      return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
+    }
 
     return NextResponse.json({
       id: plan.id,
@@ -49,8 +112,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       durationDays: plan.durationDays,
       mpPlanId: plan.mpPlanId,
       features: parseFeatures(plan.features),
-      isActive: plan.isActive,
-      isFeatured: plan.isFeatured,
+      isActive: toBool(plan.isActive),
+      isFeatured: toBool(plan.isFeatured),
       maxShotsPerDay: plan.maxShotsPerDay,
       sortOrder: plan.sortOrder,
     })
@@ -66,29 +129,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   return withAdmin(async () => {
     const { id } = await params
-    const plan = await db.subscriptionPlan.findUnique({
-      where: { id },
-      include: { _count: { select: { subscriptions: true } } },
-    })
+    const plan = await queryFirst<{ id: string; subCount: number | bigint }>(
+      `SELECT p.id,
+              (SELECT COUNT(*) FROM "UserSubscription" us WHERE us.planId = p.id) as subCount
+       FROM "SubscriptionPlan" p WHERE p.id = ?`,
+      [id],
+    )
     if (!plan) {
       return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
     }
 
-    if (plan._count.subscriptions > 0) {
+    if (Number(plan.subCount) > 0) {
       return NextResponse.json(
         {
           error: 'Cannot delete a plan with existing subscriptions.',
-          subscriberCount: plan._count.subscriptions,
+          subscriberCount: Number(plan.subCount),
         },
-        { status: 409 }
+        { status: 409 },
       )
     }
 
     // No subscriptions — soft-delete by deactivating.
-    const updated = await db.subscriptionPlan.update({
-      where: { id },
-      data: { isActive: false },
-    })
-    return NextResponse.json({ ok: true, isActive: updated.isActive })
+    await execute(
+      `UPDATE "SubscriptionPlan" SET isActive = 0, updatedAt = ? WHERE id = ?`,
+      [nowISO(), id],
+    )
+    return NextResponse.json({ ok: true, isActive: false })
   })
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { queryFirst, execute, generateId, nowISO, toDate } from '@/lib/db-direct'
 import { createToken, hashPassword, setSessionCookie } from '@/lib/auth'
 import { readJson, toErrorResponse } from '@/lib/api'
 
@@ -22,30 +22,34 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid email' }, { status: 400 })
     }
 
-    const existing = await db.user.findUnique({ where: { email } })
+    const existing = await queryFirst<{ id: string }>(
+      `SELECT id FROM "User" WHERE email = ?`,
+      [email],
+    )
     if (existing) {
       return NextResponse.json({ error: 'Email already registered' }, { status: 409 })
     }
 
     const passwordHash = await hashPassword(password)
-    const user = await db.user.create({
-      data: { email, name, passwordHash, role: 'user' },
-      select: { id: true, email: true, name: true, role: true, avatarColor: true, createdAt: true },
-    })
+    const id = generateId()
+    const ts = nowISO()
+    await execute(
+      `INSERT INTO "User" (id, email, name, passwordHash, role, avatarColor, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, 'user', '#ff3a28', ?, ?)`,
+      [id, email, name, passwordHash, ts, ts],
+    )
 
-    const token = createToken({
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role as 'user' | 'admin',
-    })
+    const token = createToken({ id, email, name, role: 'user' })
 
     const res = NextResponse.json({
       token,
       user: {
-        ...user,
-        role: user.role as 'user' | 'admin',
-        createdAt: user.createdAt.toISOString(),
+        id,
+        email,
+        name,
+        role: 'user' as const,
+        avatarColor: '#ff3a28',
+        createdAt: toDate(ts).toISOString(),
       },
     })
     res.headers.set('Set-Cookie', setSessionCookie(token))

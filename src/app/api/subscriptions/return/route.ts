@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import { queryFirst, execute, nowISO } from '@/lib/db-direct'
 import { activatePendingSubscription, readJson, withUser } from '@/lib/api'
 
 /**
@@ -10,8 +10,20 @@ import { activatePendingSubscription, readJson, withUser } from '@/lib/api'
  * string with `{ paymentId, status }`.
  *
  * If status === 'approved', the related Payment and pending UserSubscription
- * are activated.
+ * are activated via `activatePendingSubscription`.
+ *
+ * Implemented with @libsql/client directly (no Prisma).
  */
+interface PaymentRow {
+  id: string
+  userId: string
+  planId: string | null
+  amount: number
+  currency: string
+  status: string
+  mpPaymentId: string | null
+}
+
 export async function POST(req: Request) {
   return withUser(async (user) => {
     const url = new URL(req.url)
@@ -26,7 +38,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'paymentId is required' }, { status: 400 })
     }
 
-    const payment = await db.payment.findUnique({ where: { id: paymentId } })
+    const payment = await queryFirst<PaymentRow>(
+      `SELECT id, userId, planId, amount, currency, status, mpPaymentId
+         FROM "Payment"
+        WHERE id = ?`,
+      [paymentId],
+    )
     if (!payment) {
       return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
     }
@@ -39,17 +56,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, status: 'approved', ...result })
     }
 
-    // Non-approved: just record the returned status on the payment if relevant.
+    // Non-approved: record the returned status on the payment if relevant.
     if (status === 'failure' || status === 'rejected' || status === 'cancelled') {
-      await db.payment.update({
-        where: { id: payment.id },
-        data: { status: 'rejected', mpStatus: status },
-      })
+      await execute(
+        `UPDATE "Payment" SET status = ?, mpStatus = ?, updatedAt = ? WHERE id = ?`,
+        ['rejected', status, nowISO(), payment.id],
+      )
       if (payment.planId) {
-        await db.userSubscription.updateMany({
-          where: { userId: payment.userId, planId: payment.planId, status: 'pending' },
-          data: { status: 'cancelled' },
-        })
+        await execute(
+          `UPDATE "UserSubscription"
+              SET status = ?
+            WHERE userId = ? AND planId = ? AND status = ?`,
+          ['cancelled', payment.userId, payment.planId, 'pending'],
+        )
       }
       return NextResponse.json({ ok: true, status: 'rejected' })
     }

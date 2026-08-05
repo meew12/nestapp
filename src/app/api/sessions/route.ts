@@ -1,5 +1,13 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
+import {
+  query,
+  batch,
+  generateId,
+  nowISO,
+  toDate,
+  toBool,
+  fromBool,
+} from '@/lib/db-direct'
 import { readJson, withUser } from '@/lib/api'
 import type { SessionData, ShotData } from '@/lib/types'
 
@@ -9,50 +17,60 @@ import type { SessionData, ShotData } from '@/lib/types'
  */
 export async function GET() {
   return withUser(async (user) => {
-    const sessions = await db.session.findMany({
-      where: { userId: user.id },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-      select: {
-        id: true,
-        trainingMode: true,
-        totalScore: true,
-        durationSec: true,
-        bestScore: true,
-        avgScore: true,
-        shotCount: true,
-        targetSize: true,
-        distanceM: true,
-        captureMode: true,
-        weather: true,
-        notes: true,
-        drillType: true,
-        drillPassed: true,
-        drillGoal: true,
-        createdAt: true,
-        _count: { select: { shots: true } },
-      },
-    })
+    const rows = await query<{
+      id: string
+      userId: string
+      trainingMode: number
+      totalScore: number
+      durationSec: number
+      bestScore: number
+      avgScore: number
+      shotCount: number
+      targetSize: string
+      distanceM: number
+      captureMode: string
+      weather: string | null
+      notes: string | null
+      drillType: string | null
+      drillPassed: number | null
+      drillGoal: string | null
+      createdAt: string
+      shotCountActual: number
+    }>(
+      `SELECT s.*, (SELECT COUNT(*) FROM "Shot" sh WHERE sh.sessionId = s.id) AS shotCountActual
+       FROM "Session" s WHERE s.userId = ? ORDER BY s.createdAt DESC LIMIT 50`,
+      [user.id],
+    )
 
-    const data = sessions.map((s) => ({
-      id: s.id,
-      trainingMode: s.trainingMode,
-      totalScore: s.totalScore,
-      durationSec: s.durationSec,
-      bestScore: s.bestScore,
-      avgScore: s.avgScore,
-      shotCount: s.shotCount,
-      targetSize: s.targetSize,
-      distanceM: s.distanceM,
-      captureMode: s.captureMode,
-      weather: s.weather ? JSON.parse(s.weather) : null,
-      notes: s.notes,
-      drillType: s.drillType,
-      drillPassed: s.drillPassed,
-      drillGoal: s.drillGoal ? JSON.parse(s.drillGoal) : null,
-      createdAt: s.createdAt.toISOString(),
-      shotsCount: s._count.shots,
-    }))
+    const data = rows.map((s) => {
+      let weather: unknown = null
+      if (s.weather) {
+        try { weather = JSON.parse(s.weather) } catch { weather = null }
+      }
+      let drillGoal: unknown = null
+      if (s.drillGoal) {
+        try { drillGoal = JSON.parse(s.drillGoal) } catch { drillGoal = null }
+      }
+      return {
+        id: s.id,
+        trainingMode: toBool(s.trainingMode),
+        totalScore: s.totalScore,
+        durationSec: s.durationSec,
+        bestScore: s.bestScore,
+        avgScore: s.avgScore,
+        shotCount: s.shotCount,
+        targetSize: s.targetSize,
+        distanceM: s.distanceM,
+        captureMode: s.captureMode,
+        weather,
+        notes: s.notes,
+        drillType: s.drillType,
+        drillPassed: s.drillPassed == null ? null : toBool(s.drillPassed),
+        drillGoal,
+        createdAt: toDate(s.createdAt).toISOString(),
+        shotsCount: s.shotCountActual,
+      }
+    })
 
     return NextResponse.json(data)
   })
@@ -88,67 +106,90 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'shots must be an array' }, { status: 400 })
     }
 
-    const created = await db.$transaction(async (tx) => {
-      const session = await tx.session.create({
-        data: {
-          userId: user.id,
-          trainingMode,
-          totalScore: Number(totalScore) || 0,
-          durationSec: Number(durationSec) || 0,
-          bestScore: Number(bestScore) || 0,
-          avgScore: Number(avgScore) || 0,
-          shotCount: Number(shotCount) || shots.length,
-          targetSize,
-          distanceM: Number(distanceM) || 0,
-          captureMode: captureMode === 'simulator' ? 'simulator' : 'camera',
-          weather: weather ? JSON.stringify(weather) : null,
-          notes: notes ?? null,
-          drillType: drillType ?? null,
-          drillPassed: drillPassed ?? null,
-          drillGoal: drillGoal ? JSON.stringify(drillGoal) : null,
-        },
-      })
+    // Pre-generate ids + timestamp so we can insert the session and all its
+    // shots in a single atomic batch.
+    const sessionId = generateId()
+    const createdAt = nowISO()
+    const shotCountVal = Number(shotCount) || shots.length
+    const captureModeVal = captureMode === 'simulator' ? 'simulator' : 'camera'
+    const weatherText = weather ? JSON.stringify(weather) : null
+    const drillGoalText = drillGoal ? JSON.stringify(drillGoal) : null
+    const drillPassedVal = drillPassed == null ? null : fromBool(!!drillPassed)
 
-      if (shots.length > 0) {
-        const lastIndex = Math.max(...shots.map((s) => Number(s.index) || 0))
-        await tx.shot.createMany({
-          data: shots.map((s: ShotData) => ({
-            sessionId: session.id,
-            index: Number(s.index) || 0,
-            x: Number(s.x) || 0,
-            y: Number(s.y) || 0,
-            radius: Number(s.radius) || 0,
-            score: Number(s.score) || 0,
-            isLatest: Number(s.index) === lastIndex,
-            timestamp: Number(s.timestamp) || 0,
-            distanceM: Number(s.distanceM) || 0,
-          })),
+    const statements: { sql: string; args: unknown[] }[] = [
+      {
+        sql: `INSERT INTO "Session"
+              (id, userId, trainingMode, totalScore, durationSec, bestScore, avgScore, shotCount, targetSize, distanceM, captureMode, weather, notes, drillType, drillPassed, drillGoal, createdAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          sessionId,
+          user.id,
+          fromBool(!!trainingMode),
+          Number(totalScore) || 0,
+          Number(durationSec) || 0,
+          Number(bestScore) || 0,
+          Number(avgScore) || 0,
+          shotCountVal,
+          targetSize,
+          Number(distanceM) || 0,
+          captureModeVal,
+          weatherText,
+          notes ?? null,
+          drillType ?? null,
+          drillPassedVal,
+          drillGoalText,
+          createdAt,
+        ],
+      },
+    ]
+
+    if (shots.length > 0) {
+      const lastIndex = Math.max(...shots.map((s) => Number(s.index) || 0))
+      for (const s of shots as ShotData[]) {
+        const shotId = generateId()
+        const idx = Number(s.index) || 0
+        statements.push({
+          sql: `INSERT INTO "Shot"
+                (id, sessionId, index, x, y, radius, score, isLatest, timestamp, distanceM)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            shotId,
+            sessionId,
+            idx,
+            Number(s.x) || 0,
+            Number(s.y) || 0,
+            Number(s.radius) || 0,
+            Number(s.score) || 0,
+            fromBool(idx === lastIndex),
+            Number(s.timestamp) || 0,
+            Number(s.distanceM) || 0,
+          ],
         })
       }
+    }
 
-      return session
-    })
+    await batch(statements)
 
     return NextResponse.json(
       {
-        id: created.id,
-        trainingMode: created.trainingMode,
-        totalScore: created.totalScore,
-        durationSec: created.durationSec,
-        bestScore: created.bestScore,
-        avgScore: created.avgScore,
-        shotCount: created.shotCount,
-        targetSize: created.targetSize,
-        distanceM: created.distanceM,
-        captureMode: created.captureMode,
-        weather: created.weather ? JSON.parse(created.weather) : null,
-        notes: created.notes,
-        drillType: created.drillType,
-        drillPassed: created.drillPassed,
-        drillGoal: created.drillGoal ? JSON.parse(created.drillGoal) : null,
-        createdAt: created.createdAt.toISOString(),
+        id: sessionId,
+        trainingMode: !!trainingMode,
+        totalScore: Number(totalScore) || 0,
+        durationSec: Number(durationSec) || 0,
+        bestScore: Number(bestScore) || 0,
+        avgScore: Number(avgScore) || 0,
+        shotCount: shotCountVal,
+        targetSize,
+        distanceM: Number(distanceM) || 0,
+        captureMode: captureModeVal,
+        weather: weather ?? null,
+        notes: notes ?? null,
+        drillType: drillType ?? null,
+        drillPassed: drillPassedVal == null ? null : drillPassedVal === 1,
+        drillGoal: drillGoal ?? null,
+        createdAt,
       },
-      { status: 201 }
+      { status: 201 },
     )
   })
 }
