@@ -15,6 +15,10 @@ import { PrismaClient } from '@prisma/client'
  *    Uses the Prisma libSQL driver adapter (@prisma/adapter-libsql).
  *
  * The backend is selected automatically based on the DATABASE_URL scheme.
+ *
+ * IMPORTANT: The adapter is constructed EAGERLY (not lazily) so that if
+ * the adapter packages fail to load, we get a clear error at startup
+ * instead of a cryptic "URL_INVALID: The URL 'undefined'" at query time.
  */
 
 const globalForPrisma = globalThis as unknown as {
@@ -27,23 +31,38 @@ function createPrismaClient(): PrismaClient {
 
   if (isTurso) {
     // ── Turso / libSQL via driver adapter ───────────────────
-    // Use synchronous require for the adapter packages — they're regular
-    // CommonJS modules in node_modules, so this works in both Next.js
-    // server runtime and edge. On Vercel these packages are always installed.
+    // Load the adapter packages eagerly and validate them.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { createClient } = require('@libsql/client') as typeof import('@libsql/client')
+    const libsqlModule = require('@libsql/client') as typeof import('@libsql/client')
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { PrismaLibSQL } = require('@prisma/adapter-libsql') as typeof import('@prisma/adapter-libsql')
+    const adapterModule = require('@prisma/adapter-libsql') as typeof import('@prisma/adapter-libsql')
 
-    const libsql = createClient({
+    if (!libsqlModule || typeof libsqlModule.createClient !== 'function') {
+      throw new Error('@libsql/client no se cargó correctamente — createClient no está disponible')
+    }
+    if (!adapterModule || typeof adapterModule.PrismaLibSQL !== 'function') {
+      throw new Error('@prisma/adapter-libsql no se cargó correctamente — PrismaLibSQL no está disponible')
+    }
+
+    const libsql = libsqlModule.createClient({
       url,
       authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
     })
-    const adapter = new PrismaLibSQL(libsql)
+    const adapter = new adapterModule.PrismaLibSQL(libsql)
+
+    // Create PrismaClient with the adapter. This bypasses the
+    // datasource URL from schema.prisma entirely.
     return new PrismaClient({ adapter })
   }
 
   // ── Local SQLite ─────────────────────────────────────────
+  if (process.env.NODE_ENV === 'production' && !url) {
+    throw new Error(
+      'DATABASE_URL no está configurada. En Vercel → Settings → Environment Variables, ' +
+      'agregá DATABASE_URL (libsql://...) y DATABASE_AUTH_TOKEN.'
+    )
+  }
+
   return new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['query', 'warn', 'error'] : ['error'],
   })
