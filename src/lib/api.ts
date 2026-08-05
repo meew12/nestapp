@@ -1,18 +1,24 @@
 /**
  * Shared helpers for API route handlers.
+ * Uses db-direct (@libsql/client) — no Prisma dependency.
  */
 import { NextResponse } from 'next/server'
 import type { SessionUser } from './auth'
 import { requireAdmin, requireUser } from './auth'
-import { db } from './db'
+import {
+  queryFirst,
+  query,
+  execute,
+  batch,
+  generateId,
+  nowISO,
+  isoFromNow,
+  toDate,
+} from './db-direct'
 
 /**
  * Run a handler that requires auth; convert known auth errors into proper
  * HTTP responses (401 / 403). All other errors become 500.
- *
- * The handler may return any NextResponse shape — error responses produced
- * by `toErrorResponse` are typed as `NextResponse<unknown>` so they don't
- * conflict with the success body type.
  */
 export async function withUser(
   handler: (user: SessionUser) => Promise<NextResponse>
@@ -95,72 +101,74 @@ type PaymentWithPlan = {
  * Given a Payment row, mark it approved and activate the user's pending
  * UserSubscription for the same plan (creating one if it doesn't yet exist).
  *
+ * Implemented with direct libsql queries. The writes are executed as a
+ * batch (atomic transaction) after we look up the plan + existing sub.
+ *
  * Returns the activated subscription id (if any) and the new payment status.
  */
 export async function activatePendingSubscription(
   payment: PaymentWithPlan
 ): Promise<{ subscriptionId: string | null; paymentStatus: string }> {
+  // No plan — just approve the payment.
   if (!payment.planId) {
-    // No plan associated — just approve the payment.
-    const updated = await db.payment.update({
-      where: { id: payment.id },
-      data: { status: 'approved' },
-    })
-    return { subscriptionId: null, paymentStatus: updated.status }
+    await execute(
+      `UPDATE "Payment" SET status = ?, updatedAt = ? WHERE id = ?`,
+      ['approved', nowISO(), payment.id],
+    )
+    return { subscriptionId: null, paymentStatus: 'approved' }
   }
 
-  const planId = payment.planId
-  const plan = await db.subscriptionPlan.findUnique({ where: { id: planId } })
+  // Look up the plan to get durationDays.
+  const plan = await queryFirst<{ durationDays: number }>(
+    `SELECT durationDays FROM "SubscriptionPlan" WHERE id = ?`,
+    [payment.planId],
+  )
+  const durationDays = plan?.durationDays ?? 30
+  const startDate = nowISO()
+  const endDate = isoFromNow(durationDays)
 
-  return await db.$transaction(async (tx) => {
-    const updatedPayment = await tx.payment.update({
-      where: { id: payment.id },
-      data: { status: 'approved' },
+  // Look for the existing pending subscription for this user+plan.
+  const existing = await queryFirst<{ id: string }>(
+    `SELECT id FROM "UserSubscription"
+     WHERE userId = ? AND planId = ? AND status = 'pending'
+     ORDER BY createdAt DESC LIMIT 1`,
+    [payment.userId, payment.planId],
+  )
+
+  const statements: { sql: string; args: unknown[] }[] = [
+    // Approve the payment.
+    {
+      sql: `UPDATE "Payment" SET status = ?, updatedAt = ? WHERE id = ?`,
+      args: ['approved', nowISO(), payment.id],
+    },
+  ]
+
+  let subId: string
+  if (existing) {
+    subId = existing.id
+    statements.push({
+      sql: `UPDATE "UserSubscription" SET status = 'active', startDate = ?, endDate = ? WHERE id = ?`,
+      args: [startDate, endDate, subId],
     })
-
-    // Look for the existing pending subscription for this user+plan.
-    const existing = await tx.userSubscription.findFirst({
-      where: { userId: payment.userId, planId, status: 'pending' },
-      orderBy: { createdAt: 'desc' },
+  } else {
+    subId = generateId()
+    statements.push({
+      sql: `INSERT INTO "UserSubscription" (id, userId, planId, status, startDate, endDate, autoRenew, createdAt)
+            VALUES (?, ?, ?, 'active', ?, ?, 0, ?)`,
+      args: [subId, payment.userId, payment.planId, startDate, endDate, nowISO()],
     })
+  }
 
-    const now = new Date()
-    const endDate = plan
-      ? new Date(now.getTime() + plan.durationDays * 24 * 60 * 60 * 1000)
-      : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-
-    let subId: string
-    if (existing) {
-      const updated = await tx.userSubscription.update({
-        where: { id: existing.id },
-        data: { status: 'active', startDate: now, endDate },
-      })
-      subId = updated.id
-    } else {
-      // No pending sub — create an active one (e.g. webhook fired first).
-      const created = await tx.userSubscription.create({
-        data: {
-          userId: payment.userId,
-          planId,
-          status: 'active',
-          startDate: now,
-          endDate,
-          autoRenew: false,
-        },
-      })
-      subId = created.id
-    }
-
-    // Expire any other active subs the user has for other plans.
-    await tx.userSubscription.updateMany({
-      where: {
-        userId: payment.userId,
-        status: 'active',
-        id: { not: subId },
-      },
-      data: { status: 'expired' },
-    })
-
-    return { subscriptionId: subId, paymentStatus: updatedPayment.status }
+  // Expire any OTHER active subs the user has (different id).
+  statements.push({
+    sql: `UPDATE "UserSubscription" SET status = 'expired' WHERE userId = ? AND status = 'active' AND id != ?`,
+    args: [payment.userId, subId],
   })
+
+  await batch(statements)
+
+  return { subscriptionId: subId, paymentStatus: 'approved' }
 }
+
+// Re-export common helpers so routes can import from one place.
+export { query, queryFirst, execute, generateId, nowISO, isoFromNow, toDate }

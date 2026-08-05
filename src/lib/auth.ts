@@ -1,4 +1,9 @@
-import { db } from './db'
+// ═══════════════════════════════════════════════════════════
+//  auth.ts — Authentication helpers (JWT + password hashing)
+//  Uses db-direct (@libsql/client) instead of Prisma, so it works
+//  reliably on Vercel + Turso.
+// ═══════════════════════════════════════════════════════════
+import { queryFirst, toDate } from './db-direct'
 import jwt from 'jsonwebtoken'
 import { cookies } from 'next/headers'
 
@@ -105,18 +110,28 @@ export function clearSessionCookie(): string {
 export const AUTH_COOKIE = COOKIE_NAME
 
 /**
- * Fetch the full user record from DB (for admin listing etc.)
+ * Fetch the full user record from DB via direct libsql query.
+ * Used by /api/auth/me and anywhere we need the persisted user.
  */
 export async function getUserById(id: string) {
-  return db.user.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      avatarColor: true,
-      createdAt: true,
-    },
-  })
+  const row = await queryFirst<{
+    id: string
+    email: string
+    name: string | null
+    role: string
+    avatarColor: string
+    createdAt: string
+  }>(
+    `SELECT id, email, name, role, avatarColor, createdAt FROM "User" WHERE id = ?`,
+    [id],
+  )
+  if (!row) return null
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    avatarColor: row.avatarColor,
+    createdAt: toDate(row.createdAt),
+  }
 }
