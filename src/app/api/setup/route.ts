@@ -6,13 +6,17 @@
 //  plans). Designed for Vercel + Turso deployment where the user
 //  cannot run CLI scripts locally.
 //
+//  Uses @libsql/client DIRECTLY for all operations (both DDL
+//  and seed data) to avoid any dependency on Prisma driver
+//  adapter version compatibility. This makes the setup route
+//  robust even if there's a Prisma/adapter version mismatch.
+//
 //  Idempotent: safe to run multiple times.
 //  Works for both Turso (libsql://) and local SQLite (file:).
 // ═══════════════════════════════════════════════════════════
 
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { hashPassword } from '@/lib/auth'
+import { scryptSync, randomBytes } from 'crypto'
 
 // ── DDL: CREATE TABLE statements (SQLite / libSQL compatible) ──
 // Generated from prisma/schema.prisma via `prisma migrate diff`.
@@ -128,7 +132,7 @@ const DEFAULT_PLANS = [
       'Detección básica',
     ]),
     maxShotsPerDay: 20,
-    isFeatured: false,
+    isFeatured: 0,
     sortOrder: 0,
   },
   {
@@ -145,7 +149,7 @@ const DEFAULT_PLANS = [
       'Exportación de sesiones',
     ]),
     maxShotsPerDay: 0,
-    isFeatured: true,
+    isFeatured: 1,
     sortOrder: 1,
   },
   {
@@ -162,7 +166,7 @@ const DEFAULT_PLANS = [
       'Sin marcas de agua',
     ]),
     maxShotsPerDay: 0,
-    isFeatured: false,
+    isFeatured: 0,
     sortOrder: 2,
   },
   {
@@ -179,7 +183,7 @@ const DEFAULT_PLANS = [
       'API de integración',
     ]),
     maxShotsPerDay: 0,
-    isFeatured: false,
+    isFeatured: 0,
     sortOrder: 3,
   },
 ]
@@ -191,29 +195,42 @@ interface SetupStep {
 }
 
 /**
- * Create all tables via the raw libsql client (bypasses Prisma,
- * which would fail if tables don't exist yet). Only runs for
- * Turso (libsql://) backends — local SQLite uses `db:push`.
+ * Hash a password using scrypt (same format as src/lib/auth.ts).
  */
-async function createTables(): Promise<SetupStep[]> {
+function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, 64).toString('hex')
+  return `${salt}:${hash}`
+}
+
+/**
+ * Get a libsql client for direct DB access.
+ * Returns null for local SQLite (setup skips DDL in that case).
+ */
+function getLibsqlClient(): ReturnType<typeof import('@libsql/client')['createClient']> | null {
   const url = process.env.DATABASE_URL || ''
   const isTurso = url.startsWith('libsql:') || url.startsWith('https:')
+  if (!isTurso) return null
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { createClient } = require('@libsql/client') as typeof import('@libsql/client')
+  return createClient({
+    url,
+    authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
+  })
+}
 
-  if (!isTurso) {
+/**
+ * Execute all DDL statements via @libsql/client directly.
+ */
+async function createTables(): Promise<SetupStep[]> {
+  const client = getLibsqlClient()
+  if (!client) {
     return [{
       name: 'create-tables',
       status: 'skipped',
       detail: 'Local SQLite — tables created via `bun run db:push`',
     }]
   }
-
-  // Dynamically import libsql client (only needed for Turso)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createClient } = require('@libsql/client') as typeof import('@libsql/client')
-  const client = createClient({
-    url,
-    authToken: process.env.DATABASE_AUTH_TOKEN || undefined,
-  })
 
   const steps: SetupStep[] = []
   for (let i = 0; i < DDL_STATEMENTS.length; i++) {
@@ -224,7 +241,6 @@ async function createTables(): Promise<SetupStep[]> {
       steps.push({ name: `ddl-${label}`, status: 'ok' })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      // "already exists" is fine — idempotent re-run
       if (msg.includes('already exists')) {
         steps.push({ name: `ddl-${label}`, status: 'skipped', detail: 'already exists' })
       } else {
@@ -236,26 +252,92 @@ async function createTables(): Promise<SetupStep[]> {
 }
 
 /**
- * Seed admin + demo users (idempotent via upsert / findFirst).
+ * Generate a CUID-like ID (sufficient for seed records).
+ */
+function generateId(): string {
+  return 'c' + Date.now().toString(36) + randomBytes(8).toString('hex')
+}
+
+/**
+ * Seed subscription plans via @libsql/client directly.
+ */
+async function seedPlans(): Promise<SetupStep[]> {
+  const client = getLibsqlClient()
+  if (!client) {
+    return [{ name: 'seed-plans', status: 'skipped', detail: 'Local SQLite — use bun run db:seed' }]
+  }
+
+  const steps: SetupStep[] = []
+  for (const plan of DEFAULT_PLANS) {
+    try {
+      // Check if plan exists by name
+      const existing = await client.execute({
+        sql: 'SELECT id FROM SubscriptionPlan WHERE name = ?',
+        args: [plan.name],
+      })
+      if (existing.rows.length > 0) {
+        // Update existing
+        await client.execute({
+          sql: `UPDATE SubscriptionPlan SET
+            description = ?, priceARS = ?, durationDays = ?, features = ?,
+            maxShotsPerDay = ?, isFeatured = ?, sortOrder = ?, updatedAt = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+          args: [
+            plan.description, plan.priceARS, plan.durationDays, plan.features,
+            plan.maxShotsPerDay, plan.isFeatured, plan.sortOrder,
+            existing.rows[0].id as string,
+          ],
+        })
+        steps.push({ name: `seed-plan-${plan.name}`, status: 'skipped', detail: 'updated' })
+      } else {
+        // Insert new
+        await client.execute({
+          sql: `INSERT INTO SubscriptionPlan
+            (id, name, description, priceARS, durationDays, features, isActive, isFeatured, maxShotsPerDay, sortOrder)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+          args: [
+            generateId(), plan.name, plan.description, plan.priceARS,
+            plan.durationDays, plan.features, plan.isFeatured, plan.maxShotsPerDay, plan.sortOrder,
+          ],
+        })
+        steps.push({ name: `seed-plan-${plan.name}`, status: 'ok', detail: 'created' })
+      }
+    } catch (err: unknown) {
+      steps.push({
+        name: `seed-plan-${plan.name}`,
+        status: 'error',
+        detail: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  return steps
+}
+
+/**
+ * Seed admin + demo users via @libsql/client directly.
  */
 async function seedUsers(): Promise<SetupStep[]> {
+  const client = getLibsqlClient()
+  if (!client) {
+    return [{ name: 'seed-users', status: 'skipped', detail: 'Local SQLite — use bun run db:seed' }]
+  }
+
   const steps: SetupStep[] = []
 
-  // Admin
+  // ── Admin user ──
   try {
     const adminEmail = 'admin@etarget.app'
-    const existingAdmin = await db.user.findUnique({ where: { email: adminEmail } })
-    if (existingAdmin) {
+    const existing = await client.execute({
+      sql: 'SELECT id FROM User WHERE email = ?',
+      args: [adminEmail],
+    })
+    if (existing.rows.length > 0) {
       steps.push({ name: 'seed-admin', status: 'skipped', detail: `${adminEmail} already exists` })
     } else {
-      await db.user.create({
-        data: {
-          email: adminEmail,
-          name: 'Administrador',
-          passwordHash: await hashPassword('admin123'),
-          role: 'admin',
-          avatarColor: '#ff3a28',
-        },
+      await client.execute({
+        sql: `INSERT INTO User (id, email, name, passwordHash, role, avatarColor)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [generateId(), adminEmail, 'Administrador', hashPassword('admin123'), 'admin', '#ff3a28'],
       })
       steps.push({ name: 'seed-admin', status: 'ok', detail: `${adminEmail} / admin123` })
     }
@@ -263,81 +345,94 @@ async function seedUsers(): Promise<SetupStep[]> {
     steps.push({ name: 'seed-admin', status: 'error', detail: err instanceof Error ? err.message : String(err) })
   }
 
-  // Demo user
+  // ── Demo user ──
+  let demoUserId: string | null = null
+  let proPlanId: string | null = null
   try {
     const demoEmail = 'tirador@etarget.app'
-    const existingDemo = await db.user.findUnique({ where: { email: demoEmail } })
-    if (existingDemo) {
+    const existing = await client.execute({
+      sql: 'SELECT id FROM User WHERE email = ?',
+      args: [demoEmail],
+    })
+    if (existing.rows.length > 0) {
+      demoUserId = existing.rows[0].id as string
       steps.push({ name: 'seed-demo', status: 'skipped', detail: `${demoEmail} already exists` })
     } else {
-      const demo = await db.user.create({
-        data: {
-          email: demoEmail,
-          name: 'Tirador Demo',
-          passwordHash: await hashPassword('demo123'),
-          role: 'user',
-          avatarColor: '#00e5ff',
-        },
+      demoUserId = generateId()
+      await client.execute({
+        sql: `INSERT INTO User (id, email, name, passwordHash, role, avatarColor)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+        args: [demoUserId, demoEmail, 'Tirador Demo', hashPassword('demo123'), 'user', '#00e5ff'],
       })
-      // Give demo user an active PRO subscription
-      const proPlan = await db.subscriptionPlan.findFirst({ where: { name: 'TIRADOR PRO' } })
-      if (proPlan) {
-        const existingSub = await db.userSubscription.findFirst({
-          where: { userId: demo.id, status: 'active' },
-        })
-        if (!existingSub) {
-          await db.userSubscription.create({
-            data: {
-              userId: demo.id,
-              planId: proPlan.id,
-              status: 'active',
-              startDate: new Date(),
-              endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-              autoRenew: true,
-            },
-          })
-          await db.payment.create({
-            data: {
-              userId: demo.id,
-              planId: proPlan.id,
-              amount: proPlan.priceARS,
-              currency: 'ARS',
-              status: 'approved',
-              mpPaymentId: 'SETUP-DEMO-001',
-              description: 'Pago inicial demo (setup)',
-            },
-          })
-        }
-      }
       steps.push({ name: 'seed-demo', status: 'ok', detail: `${demoEmail} / demo123` })
     }
   } catch (err: unknown) {
     steps.push({ name: 'seed-demo', status: 'error', detail: err instanceof Error ? err.message : String(err) })
   }
 
+  // ── Give demo user active PRO subscription ──
+  if (demoUserId) {
+    try {
+      // Find PRO plan
+      const proPlan = await client.execute({
+        sql: 'SELECT id, priceARS FROM SubscriptionPlan WHERE name = ?',
+        args: ['TIRADOR PRO'],
+      })
+      if (proPlan.rows.length > 0) {
+        proPlanId = proPlan.rows[0].id as string
+        const priceARS = proPlan.rows[0].priceARS as number
+
+        // Check if demo already has active subscription
+        const existingSub = await client.execute({
+          sql: 'SELECT id FROM UserSubscription WHERE userId = ? AND status = ?',
+          args: [demoUserId, 'active'],
+        })
+        if (existingSub.rows.length === 0) {
+          const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+          await client.execute({
+            sql: `INSERT INTO UserSubscription (id, userId, planId, status, startDate, endDate, autoRenew)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            args: [generateId(), demoUserId, proPlanId, 'active', new Date().toISOString(), endDate, 1],
+          })
+          await client.execute({
+            sql: `INSERT INTO Payment (id, userId, planId, amount, currency, status, mpPaymentId, description)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [
+              generateId(), demoUserId, proPlanId, priceARS, 'ARS', 'approved',
+              'SETUP-DEMO-001', 'Pago inicial demo (setup)',
+            ],
+          })
+          steps.push({ name: 'seed-demo-sub', status: 'ok', detail: 'PRO subscription activated' })
+        } else {
+          steps.push({ name: 'seed-demo-sub', status: 'skipped', detail: 'already has active sub' })
+        }
+      }
+    } catch (err: unknown) {
+      steps.push({ name: 'seed-demo-sub', status: 'error', detail: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
   return steps
 }
 
 /**
- * Seed subscription plans (idempotent — updates if name exists).
+ * Count records in each table for confirmation.
  */
-async function seedPlans(): Promise<SetupStep[]> {
-  const steps: SetupStep[] = []
-  try {
-    for (const plan of DEFAULT_PLANS) {
-      const existing = await db.subscriptionPlan.findFirst({ where: { name: plan.name } })
-      if (existing) {
-        await db.subscriptionPlan.update({ where: { id: existing.id }, data: plan })
-        steps.push({ name: `seed-plan-${plan.name}`, status: 'skipped', detail: 'updated' })
-      } else {
-        await db.subscriptionPlan.create({ data: plan })
-        steps.push({ name: `seed-plan-${plan.name}`, status: 'ok', detail: 'created' })
-      }
+async function countRecords(): Promise<Record<string, number>> {
+  const client = getLibsqlClient()
+  if (!client) return {}
+
+  const counts: Record<string, number> = {}
+  const tables = ['User', 'SubscriptionPlan', 'Session', 'Shot', 'UserSubscription', 'Payment']
+  for (const table of tables) {
+    try {
+      const result = await client.execute(`SELECT COUNT(*) as cnt FROM "${table}"`)
+      counts[table.toLowerCase()] = Number(result.rows[0]?.cnt || 0)
+    } catch {
+      // table might not exist
     }
-  } catch (err: unknown) {
-    steps.push({ name: 'seed-plans', status: 'error', detail: err instanceof Error ? err.message : String(err) })
   }
-  return steps
+  return counts
 }
 
 export async function GET() {
@@ -364,7 +459,7 @@ async function runSetup() {
     )
   }
 
-  // 1. Create tables (Turso only; local SQLite uses db:push)
+  // 1. Create tables
   try {
     const tableSteps = await createTables()
     log.push(...tableSteps)
@@ -380,7 +475,7 @@ async function runSetup() {
     )
   }
 
-  // 2. Seed plans (must come before demo user, which references PRO plan)
+  // 2. Seed plans
   try {
     const planSteps = await seedPlans()
     log.push(...planSteps)
@@ -402,20 +497,7 @@ async function runSetup() {
   const elapsedMs = Date.now() - startedAt
 
   // Count records for confirmation
-  let counts: Record<string, number> = {}
-  try {
-    const [users, plans, sessions, shots, subs, payments] = await Promise.all([
-      db.user.count(),
-      db.subscriptionPlan.count(),
-      db.session.count(),
-      db.shot.count(),
-      db.userSubscription.count(),
-      db.payment.count(),
-    ])
-    counts = { users, plans, sessions, shots, subscriptions: subs, payments }
-  } catch {
-    // ignore — tables might not exist if DDL failed
-  }
+  const counts = await countRecords()
 
   return NextResponse.json({
     ok,
