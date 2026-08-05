@@ -15,9 +15,9 @@ const LOADER_STEPS = [
 /**
  * Splash screen — shown for ~2.6s on app boot.
  *
- * Uses the official E-TARGET logo (`/logo1.png`) over a deep tactical
- * `#070911` background with a subtle animated grid + corner HUD brackets.
- * The loader steps mimic a real targeting system boot sequence.
+ * Animated tactical reticle (SVG) over a deep `#070911` background with a
+ * subtle animated grid + corner HUD brackets. The loader steps mimic a
+ * real targeting system boot sequence.
  */
 export function Splash() {
   const [step, setStep] = useState(0)
@@ -91,9 +91,9 @@ export function Splash() {
 
       {/* Center content */}
       <div className="relative z-10 flex flex-col items-center gap-4 animate-fade-in-up px-6">
-        {/* Logo image with subtle entrance + scanline sweep */}
+        {/* Animated tactical reticle (SVG) */}
         <div className="relative w-[180px] h-[180px] sm:w-[220px] sm:h-[220px] flex items-center justify-center">
-          {/* Pulsing reticle ring behind the logo */}
+          {/* Pulsing reticle rings */}
           <div
             className="absolute inset-0 rounded-full border border-[rgba(255,58,40,0.35)]"
             style={{ animation: 'pulseRing 2.4s ease-in-out infinite' }}
@@ -102,19 +102,56 @@ export function Splash() {
             className="absolute inset-3 rounded-full border border-[rgba(255,58,40,0.18)]"
             style={{ animation: 'pulseRing 2.4s ease-in-out infinite', animationDelay: '0.4s' }}
           />
-          {/* The actual logo */}
-          <img
-            src="/logo1.png"
-            alt="E-TARGET — Tactical Shooting Detection"
-            className="relative z-10 w-[78%] h-[78%] object-contain"
+
+          {/* SVG animated crosshair reticle */}
+          <svg
+            viewBox="0 0 200 200"
+            className="relative z-10 w-[85%] h-[85%]"
             style={{
               filter: 'drop-shadow(0 0 18px rgba(255,58,40,0.55))',
-              opacity: 1,
               animation: 'logoFloat 4s ease-in-out infinite',
             }}
-            draggable={false}
-          />
-          {/* Scanline sweep over the logo */}
+          >
+            {/* Outer rotating ring with tick marks */}
+            <g style={{ transformOrigin: '100px 100px', animation: 'reticleSpin 12s linear infinite' }}>
+              <circle cx="100" cy="100" r="88" fill="none" stroke="#ff3a28" strokeWidth="1.2" opacity="0.55" strokeDasharray="3 6" />
+              {/* Cardinal tick marks (long) */}
+              <line x1="100" y1="6" x2="100" y2="20" stroke="#ff3a28" strokeWidth="2" />
+              <line x1="100" y1="180" x2="100" y2="194" stroke="#ff3a28" strokeWidth="2" />
+              <line x1="6" y1="100" x2="20" y2="100" stroke="#ff3a28" strokeWidth="2" />
+              <line x1="180" y1="100" x2="194" y2="100" stroke="#ff3a28" strokeWidth="2" />
+              {/* Diagonal tick marks (short) */}
+              <line x1="36.4" y1="36.4" x2="46.3" y2="46.3" stroke="#ff3a28" strokeWidth="1.4" opacity="0.7" />
+              <line x1="163.6" y1="36.4" x2="153.7" y2="46.3" stroke="#ff3a28" strokeWidth="1.4" opacity="0.7" />
+              <line x1="36.4" y1="163.6" x2="46.3" y2="153.7" stroke="#ff3a28" strokeWidth="1.4" opacity="0.7" />
+              <line x1="163.6" y1="163.6" x2="153.7" y2="153.7" stroke="#ff3a28" strokeWidth="1.4" opacity="0.7" />
+            </g>
+
+            {/* Middle ring (counter-rotating) */}
+            <g style={{ transformOrigin: '100px 100px', animation: 'reticleSpinRev 9s linear infinite' }}>
+              <circle cx="100" cy="100" r="62" fill="none" stroke="#ff3a28" strokeWidth="1" opacity="0.4" strokeDasharray="2 4" />
+              {/* Crosshair lines (gap in center) */}
+              <line x1="100" y1="30" x2="100" y2="82" stroke="#ff3a28" strokeWidth="1.5" opacity="0.8" />
+              <line x1="100" y1="118" x2="100" y2="170" stroke="#ff3a28" strokeWidth="1.5" opacity="0.8" />
+              <line x1="30" y1="100" x2="82" y2="100" stroke="#ff3a28" strokeWidth="1.5" opacity="0.8" />
+              <line x1="118" y1="100" x2="170" y2="100" stroke="#ff3a28" strokeWidth="1.5" opacity="0.8" />
+            </g>
+
+            {/* Inner solid ring */}
+            <circle cx="100" cy="100" r="40" fill="none" stroke="#ff3a28" strokeWidth="1.5" opacity="0.7" />
+
+            {/* Center bullseye */}
+            <circle cx="100" cy="100" r="14" fill="none" stroke="#ff3a28" strokeWidth="2" opacity="0.9" />
+            <circle cx="100" cy="100" r="6" fill="#ff3a28" opacity="0.9" style={{ animation: 'corePulse 1.6s ease-in-out infinite' }} />
+
+            {/* Small corner brackets on inner ring (HUD style) */}
+            <path d="M 64 52 L 56 52 L 56 60" fill="none" stroke="#ff3a28" strokeWidth="1.4" opacity="0.6" />
+            <path d="M 136 52 L 144 52 L 144 60" fill="none" stroke="#ff3a28" strokeWidth="1.4" opacity="0.6" />
+            <path d="M 64 148 L 56 148 L 56 140" fill="none" stroke="#ff3a28" strokeWidth="1.4" opacity="0.6" />
+            <path d="M 136 148 L 144 148 L 144 140" fill="none" stroke="#ff3a28" strokeWidth="1.4" opacity="0.6" />
+          </svg>
+
+          {/* Scanline sweep over the reticle */}
           <div
             className="absolute inset-0 overflow-hidden rounded-full pointer-events-none"
             style={{ opacity: 0.4 }}
@@ -181,6 +218,18 @@ export function Splash() {
         @keyframes logoFloat {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-4px); }
+        }
+        @keyframes reticleSpin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        @keyframes reticleSpinRev {
+          from { transform: rotate(360deg); }
+          to { transform: rotate(0deg); }
+        }
+        @keyframes corePulse {
+          0%, 100% { opacity: 0.9; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.7); }
         }
       `}</style>
     </div>
