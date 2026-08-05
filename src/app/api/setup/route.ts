@@ -290,11 +290,11 @@ async function seedPlans(): Promise<SetupStep[]> {
         })
         steps.push({ name: `seed-plan-${plan.name}`, status: 'skipped', detail: 'updated' })
       } else {
-        // Insert new
+        // Insert new (updatedAt is NOT NULL without default, must set explicitly)
         await client.execute({
           sql: `INSERT INTO SubscriptionPlan
-            (id, name, description, priceARS, durationDays, features, isActive, isFeatured, maxShotsPerDay, sortOrder)
-            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+            (id, name, description, priceARS, durationDays, features, isActive, isFeatured, maxShotsPerDay, sortOrder, createdAt, updatedAt)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
           args: [
             generateId(), plan.name, plan.description, plan.priceARS,
             plan.durationDays, plan.features, plan.isFeatured, plan.maxShotsPerDay, plan.sortOrder,
@@ -335,8 +335,8 @@ async function seedUsers(): Promise<SetupStep[]> {
       steps.push({ name: 'seed-admin', status: 'skipped', detail: `${adminEmail} already exists` })
     } else {
       await client.execute({
-        sql: `INSERT INTO User (id, email, name, passwordHash, role, avatarColor)
-          VALUES (?, ?, ?, ?, ?, ?)`,
+        sql: `INSERT INTO User (id, email, name, passwordHash, role, avatarColor, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         args: [generateId(), adminEmail, 'Administrador', hashPassword('admin123'), 'admin', '#ff3a28'],
       })
       steps.push({ name: 'seed-admin', status: 'ok', detail: `${adminEmail} / admin123` })
@@ -360,8 +360,8 @@ async function seedUsers(): Promise<SetupStep[]> {
     } else {
       demoUserId = generateId()
       await client.execute({
-        sql: `INSERT INTO User (id, email, name, passwordHash, role, avatarColor)
-          VALUES (?, ?, ?, ?, ?, ?)`,
+        sql: `INSERT INTO User (id, email, name, passwordHash, role, avatarColor, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
         args: [demoUserId, demoEmail, 'Tirador Demo', hashPassword('demo123'), 'user', '#00e5ff'],
       })
       steps.push({ name: 'seed-demo', status: 'ok', detail: `${demoEmail} / demo123` })
@@ -388,15 +388,14 @@ async function seedUsers(): Promise<SetupStep[]> {
           args: [demoUserId, 'active'],
         })
         if (existingSub.rows.length === 0) {
-          const endDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
           await client.execute({
-            sql: `INSERT INTO UserSubscription (id, userId, planId, status, startDate, endDate, autoRenew)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            args: [generateId(), demoUserId, proPlanId, 'active', new Date().toISOString(), endDate, 1],
+            sql: `INSERT INTO UserSubscription (id, userId, planId, status, startDate, endDate, autoRenew, createdAt)
+              VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, datetime('now', '+30 days'), ?, CURRENT_TIMESTAMP)`,
+            args: [generateId(), demoUserId, proPlanId, 'active', 1],
           })
           await client.execute({
-            sql: `INSERT INTO Payment (id, userId, planId, amount, currency, status, mpPaymentId, description)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            sql: `INSERT INTO Payment (id, userId, planId, amount, currency, status, mpPaymentId, description, createdAt, updatedAt)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
             args: [
               generateId(), demoUserId, proPlanId, priceARS, 'ARS', 'approved',
               'SETUP-DEMO-001', 'Pago inicial demo (setup)',
